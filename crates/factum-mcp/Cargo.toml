@@ -1,0 +1,15 @@
+[package]
+name = "factum-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MCP bridge for Factum — JSON-RPC tools and resources"
+
+[dependencies]
+factum-core.workspace = true
+factum-rt.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+smol_str.workspace = true
+thiserror.workspace = true

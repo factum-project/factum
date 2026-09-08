@@ -1,0 +1,20 @@
+[
+  {
+    "id": "compact-disambiguation-string-with-question",
+    "description": "String literal containing '?' must be encoded with embedded quotes in compact form to distinguish from Var. Verifies: compact(deserialize(compact(x))) == compact(x).",
+    "input": "(node n001 :pred (note @ACME-CORP \"?foo\"))",
+    "expected_compact_json": "{\"0\":\"n001\",\"1\":\"note\",\"2\":[\"@ACME-CORP\",\"\\\"?foo\\\"\"],\"5\":{\"t\":\"asserted\",\"v\":{\"b\":\"system\"}},\"6\":1.0,\"7\":0.5}"
+  },
+  {
+    "id": "compact-disambiguation-string-with-at",
+    "description": "String literal containing '@' must be encoded with embedded quotes to distinguish from Entity reference.",
+    "input": "(node n002 :pred (note @ACME-CORP \"@bar\"))",
+    "expected_compact_json": "{\"0\":\"n002\",\"1\":\"note\",\"2\":[\"@ACME-CORP\",\"\\\"@bar\\\"\"],\"5\":{\"t\":\"asserted\",\"v\":{\"b\":\"system\"}},\"6\":1.0,\"7\":0.5}"
+  },
+  {
+    "id": "compact-validity-open-ended-window",
+    "description": "CompactValidity Window with omitted 'u' field means open-ended (valid from 'f' with no expiry), distinct from Forever.",
+    "input": "(node n003 :pred (active @ACME-CORP) :valid (window \"2024-01-01T00:00:00Z\"))",
+    "expected_compact_json": "{\"0\":\"n003\",\"1\":\"active\",\"2\":[\"@ACME-CORP\"],\"4\":{\"f\":\"2024-01-01\"},\"5\":{\"t\":\"asserted\",\"v\":{\"b\":\"system\"}},\"6\":1.0,\"7\":0.5}"
+  }
+]

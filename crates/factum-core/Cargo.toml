@@ -1,0 +1,21 @@
+[package]
+name = "factum-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core data model, parser, and serialization for Factum"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+smol_str.workspace = true
+thiserror.workspace = true
+ahash.workspace = true
+parking_lot.workspace = true
+
+[dev-dependencies]
+# For fuzzing-style property tests
+proptest = "1"
+# For conformance test vector loading
+serde_json.workspace = true

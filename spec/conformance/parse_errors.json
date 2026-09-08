@@ -1,0 +1,50 @@
+[
+  {
+    "id": "err-missing-pred-field",
+    "description": "Node without required :pred field",
+    "input": "(node n001 :conf 0.5)",
+    "error_class": "MissingPredField"
+  },
+  {
+    "id": "err-unknown-node-field",
+    "description": "Node with unrecognized :keyword field",
+    "input": "(node n001 :pred (instance-of @X org) :unknown_field 123)",
+    "error_class": "UnknownNodeField"
+  },
+  {
+    "id": "err-unbalanced-paren",
+    "description": "Missing closing paren — parser must detect, not hang",
+    "input": "(node n1 :pred (f @X)",
+    "error_class": "UnbalancedParen"
+  },
+  {
+    "id": "err-unterminated-string",
+    "description": "String literal without closing quote",
+    "input": "(node n001 :pred (note @X \"hello))",
+    "error_class": "UnterminatedString"
+  },
+  {
+    "id": "err-named-before-positional",
+    "description": "Positional argument appears after a named argument — violates parse uniqueness rule",
+    "input": "(node n1 :pred (f :x 1 @Y))",
+    "error_class": "NamedArgBeforePositional"
+  },
+  {
+    "id": "err-depth-limit-exceeded",
+    "description": "Deeply nested predicates exceeding MAX_PARSE_DEPTH (128) — must not stack overflow",
+    "input": "(node n001 :pred (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a (a @X))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+    "error_class": "DepthLimitExceeded"
+  },
+  {
+    "id": "err-depth-limit-lists",
+    "description": "Deeply nested lists exceeding MAX_PARSE_DEPTH — list nesting is also a DoS vector",
+    "input": "(node n001 :pred (data [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[@X]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+    "error_class": "DepthLimitExceeded"
+  },
+  {
+    "id": "err-extracted-without-model",
+    "description": "Extracted provenance without model ref — violates the non-optional audit chain constraint. This is the single most important negative vector: it tests that the spec-level constraint lives in the parser, not just in one implementation.",
+    "input": "(node n1 :pred (f @X) :src (extracted \"d\" [0 1]))",
+    "error_class": "MissingModelRef"
+  }
+]

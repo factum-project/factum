@@ -1,0 +1,30 @@
+[package]
+name = "factum-fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+factum-core = { path = "../crates/factum-core" }
+
+[[bin]]
+name = "fuzz_parser"
+path = "fuzz_targets/fuzz_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_serialize_roundtrip"
+path = "fuzz_targets/fuzz_serialize_roundtrip.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_lexer"
+path = "fuzz_targets/fuzz_lexer.rs"
+test = false
+doc = false

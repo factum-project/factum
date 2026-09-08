@@ -1,0 +1,104 @@
+[
+  {
+    "id": "basic-node",
+    "description": "Simplest valid node: id + predicate with 2 args",
+    "input": "(node n001 :pred (instance-of @ACME-CORP organization))",
+    "expected_canonical": "(node n001 :pred (instance-of @ACME-CORP organization) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "node-with-confidence",
+    "description": "Node with confidence and authority",
+    "input": "(node n002 :pred (located-in @X @Y) :conf 0.85 :auth 0.9)",
+    "expected_canonical": "(node n002 :pred (located-in @X @Y) :valid forever :src (asserted \"system\") :conf 0.85 :auth 0.9 :perm public)"
+  },
+  {
+    "id": "node-with-decimal",
+    "description": "Decimal literal — verifies Dec(i128,u8) precision is preserved (230.50 → mantissa=23050, scale=2)",
+    "input": "(node n003 :pred (revenue @X 230.50))",
+    "expected_canonical": "(node n003 :pred (revenue @X 230.50) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "node-with-negative-decimal",
+    "description": "Negative decimal literal — verifies sign handling in Dec",
+    "input": "(node n003b :pred (balance @X -230.50))",
+    "expected_canonical": "(node n003b :pred (balance @X -230.50) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "node-with-zero-scale-decimal",
+    "description": "Integer-as-decimal — 42 with no fractional part, scale=0",
+    "input": "(node n003c :pred (count @X 42))",
+    "expected_canonical": "(node n003c :pred (count @X 42) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "node-with-permissions",
+    "description": "Node with confidential permissions",
+    "input": "(node n004 :pred (shareholder-major @X @Y 0.73) :perm confidential)",
+    "expected_canonical": "(node n004 :pred (shareholder-major @X @Y 0.73) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm confidential)"
+  },
+  {
+    "id": "node-with-extracted-provenance",
+    "description": "Extracted provenance — MUST carry model ref. Verifies doc id, span, model name+version are structurally preserved.",
+    "input": "(node n005 :pred (located-in @X @Y) :src (extracted \"doc001\" [0 100] (model \"gpt-4\" \"2024-06\")))",
+    "expected_canonical": "(node n005 :pred (located-in @X @Y) :valid forever :src (extracted \"doc001\" [0 100] (model \"gpt-4\" \"2024-06\")) :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "node-with-verbatim-provenance",
+    "description": "Verbatim provenance — verifies doc id and span are preserved",
+    "input": "(node n005b :pred (quote @X \"hello world\") :src (verbatim \"doc002\" [50 61]))",
+    "expected_canonical": "(node n005b :pred (quote @X \"hello world\") :valid forever :src (verbatim \"doc002\" [50 61]) :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "node-with-derived-provenance-and-deps",
+    "description": "Derived provenance + dependency list — verifies from-node, rule, and deps array are structurally preserved",
+    "input": "(node n006 :pred (subsidiary-of @A @B) :src (derived n001 \"rule-merge\") :deps [n001 n002])",
+    "expected_canonical": "(node n006 :pred (subsidiary-of @A @B) :valid forever :src (derived n001 \"rule-merge\") :conf 1 :auth 0.5 :perm public :deps [n001 n002])"
+  },
+  {
+    "id": "node-with-named-args",
+    "description": "Predicate with named arguments after positional args — verifies named args are preserved in order",
+    "input": "(node n007 :pred (revenue @X 1000 :period #date(2024-01-01) :currency \"CNY\"))",
+    "expected_canonical": "(node n007 :pred (revenue @X 1000 :period #date(2024-01-01) :currency \"CNY\") :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "node-with-validity-forever",
+    "description": "Explicit forever validity",
+    "input": "(node n008 :pred (active @X) :valid forever)",
+    "expected_canonical": "(node n008 :pred (active @X) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "node-with-validity-window",
+    "description": "Temporal validity window — verifies RFC3339 timestamps are preserved exactly",
+    "input": "(node n009 :pred (ceo-of @X @Y) :valid (window \"2024-01-01T00:00:00Z\" \"2024-12-31T00:00:00Z\"))",
+    "expected_canonical": "(node n009 :pred (ceo-of @X @Y) :valid (window \"2024-01-01T00:00:00+00:00\" \"2024-12-31T00:00:00+00:00\") :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "node-with-nested-predicate",
+    "description": "Nested compound predicate in argument position — verifies recursive structure is preserved",
+    "input": "(node n010 :pred (acquired-by @X @Y #date(2024-01-01) (revenue @X 100000000)))",
+    "expected_canonical": "(node n010 :pred (acquired-by @X @Y #date(2024-01-01) (revenue @X 100000000)) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "node-with-list-term",
+    "description": "List argument — verifies list structure and element order are preserved",
+    "input": "(node n011 :pred (stakeholders @X [@A @B @C]))",
+    "expected_canonical": "(node n011 :pred (stakeholders @X [@A @B @C]) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "node-with-boolean",
+    "description": "Boolean literal in argument position",
+    "input": "(node n012 :pred (active @X #t))",
+    "expected_canonical": "(node n012 :pred (active @X #t) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)"
+  },
+  {
+    "id": "multiple-nodes",
+    "description": "Multiple nodes in one source string — verifies parser handles sequences",
+    "input": "(node n001 :pred (instance-of @X organization))\n(node n002 :pred (located-in @X @Y))",
+    "expected_canonical": "(node n001 :pred (instance-of @X organization) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)\n(node n002 :pred (located-in @X @Y) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)\n"
+  },
+  {
+    "id": "comments-ignored",
+    "description": "Comments are properly ignored by parser",
+    "input": "; top comment\n(node n001 :pred (instance-of @X organization)) ; trailing",
+    "expected_canonical": "(node n001 :pred (instance-of @X organization) :valid forever :src (asserted \"system\") :conf 1 :auth 0.5 :perm public)"
+  }
+]

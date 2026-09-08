@@ -1,0 +1,30 @@
+{
+  "spec_version": "0.1.0-alpha",
+  "description": "Factum-F conformance test vectors. Language-agnostic: any Factum implementation (Rust, Python, TS, etc.) should produce identical canonical serialization for these inputs.",
+  "charset_policy": "v0.1-alpha: Entity and Symbol identifiers are ASCII-only ([a-zA-Z][a-zA-Z0-9_-]*). Unicode support and NFC normalization are deferred to a future spec version.",
+  "format": {
+    "positive_vectors": {
+      "id": "unique test identifier",
+      "description": "what this vector tests",
+      "input": "Factum-F source string",
+      "expected_canonical": "canonical serialization of parse(input). The implementation must: parse(input) → serialize(result) → compare against expected_canonical. Two implementations that both pass are structurally identical."
+    },
+    "negative_vectors": {
+      "id": "unique test identifier",
+      "description": "what error this vector tests",
+      "input": "Factum-F source string that should fail to parse",
+      "error_class": "categorized error type (see error taxonomy below)"
+    },
+    "error_taxonomy": [
+      "UnbalancedParen — mismatched ( ) or [ ]",
+      "NamedArgBeforePositional — positional arg appears after a named arg",
+      "DepthLimitExceeded — nesting exceeds MAX_PARSE_DEPTH",
+      "MissingModelRef — Extracted provenance lacks model field",
+      "MissingPredField — node has no :pred field",
+      "UnknownNodeField — unrecognized :keyword in node body",
+      "UnterminatedString — string literal without closing quote",
+      "InvalidDecimal — malformed numeric literal",
+      "UnexpectedToken — token appears where another was expected"
+    ]
+  }
+}

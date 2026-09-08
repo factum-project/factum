@@ -1,0 +1,19 @@
+[package]
+name = "factum-rt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Factum runtime: in-memory store, indexing, query, arbitration"
+
+[dependencies]
+factum-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+smol_str.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true
+ahash.workspace = true
+
+[dev-dependencies]
+proptest = "1"

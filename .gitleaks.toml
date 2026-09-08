@@ -1,0 +1,18 @@
+# gitleaks configuration for Factum
+# https://github.com/gitleaks/gitleaks
+
+title = "Factum gitleaks config"
+
+[allowlist]
+description = "Allowed patterns that are not secrets"
+paths = [
+  '''spec/conformance/.*\.json''',  # Test vectors may contain fake doc IDs
+  '''crates/factum-core/src/types\.rs''',  # Source code with test data
+  '''crates/factum-demo/src/main\.rs''',    # Demo with test data
+]
+
+# Test fixture model references like "gpt-4", "2024-06" are not secrets
+regexes = [
+  '''model.*gpt-4''',
+  '''model.*claude''',
+]

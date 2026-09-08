@@ -1,0 +1,21 @@
+# DCO enforcement workflow
+# Verifies that all commits in a PR are signed off (DCO)
+
+name: DCO
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  dco-check:
+    name: DCO Sign-Off Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check DCO
+        uses: dco-bot/dco-action@master
+        with:
+          require: true

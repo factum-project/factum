@@ -1,0 +1,23 @@
+# Rust
+/target/
+**/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Fuzz artifacts
+fuzz/artifacts/
+fuzz/corpus/
+fuzz/coverage/
+
+# Environment
+.env
+.env.local
