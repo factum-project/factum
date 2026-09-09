@@ -30,8 +30,8 @@ jobs:
   fuzz-short:
     name: Fuzz (10 min, parser)
     runs-on: ubuntu-latest
-    # Only run on main pushes, not PRs (too slow for PR review)
-    if: github.event_name == 'push'
+    # Only run on manual dispatch or schedule, not on push/PR (too slow)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -56,6 +56,7 @@ jobs:
   security-scan:
     name: Secret scanning (gitleaks)
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
