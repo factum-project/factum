@@ -28,3 +28,9 @@ name = "fuzz_lexer"
 path = "fuzz_targets/fuzz_lexer.rs"
 test = false
 doc = false
+
+[workspace]
+members = ["."]
+
+[workspace]
+members = ["."]
