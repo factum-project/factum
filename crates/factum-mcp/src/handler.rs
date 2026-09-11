@@ -13,15 +13,30 @@ use factum_rt::arbitration::ConflictPolicy;
 use crate::protocol::*;
 use crate::tools::*;
 
+/// The form in which query results are serialized.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PreferredForm {
+    /// Compact JSON with numeric tags (default, for service-to-service).
+    #[default]
+    Compact,
+    /// Canonical S-expression text (for LLM context, saves 62% tokens).
+    Canonical,
+}
+
 /// MCP handler — bridges MCP requests to the Factum runtime.
 pub struct McpHandler {
     store: Arc<FactumStore>,
+    /// The preferred serialization form, negotiated during initialize.
+    preferred_form: parking_lot::RwLock<PreferredForm>,
 }
 
 impl McpHandler {
     /// Create a new handler with the given store.
     pub fn new(store: Arc<FactumStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            preferred_form: parking_lot::RwLock::new(PreferredForm::default()),
+        }
     }
 
     /// Process a JSON-RPC request and return a JSON-RPC response.
@@ -44,11 +59,23 @@ impl McpHandler {
     /// references. See spec/compact-form.md §6.
     fn handle_initialize(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
         // Check if the client declared the `factum` capability
-        let client_factum_aware = req.params
+        let factum_caps = req.params
             .as_ref()
             .and_then(|p| p.get("capabilities"))
-            .and_then(|c| c.get("factum"))
-            .is_some();
+            .and_then(|c| c.get("factum"));
+
+        let client_factum_aware = factum_caps.is_some();
+
+        // Negotiate preferred_form (spec/compact-form.md §8)
+        if let Some(fc) = factum_caps {
+            if let Some(pf) = fc.get("preferred_form").and_then(|v| v.as_str()) {
+                match pf {
+                    "canonical" => *self.preferred_form.write() = PreferredForm::Canonical,
+                    "compact" => *self.preferred_form.write() = PreferredForm::Compact,
+                    _ => {} // unknown value, keep default
+                }
+            }
+        }
 
         // Send morpheme table only to Factum-aware clients
         let morphemes = if client_factum_aware {
@@ -162,15 +189,33 @@ impl McpHandler {
         // Execute query
         match self.store.query(&q, &opts) {
             Ok(results) => {
-                // Serialize results in compact form
-                let nodes: Vec<_> = results.results.iter()
-                    .map(|r| serialize::compact(&r.node, self.store.registry()))
-                    .collect();
-                let json = serde_json::json!({
-                    "nodes": nodes,
-                    "count": results.results.len(),
-                    "ambiguous": results.ambiguous,
-                });
+                // Serialize results based on negotiated preferred_form
+                let pf = *self.preferred_form.read();
+                let json = match pf {
+                    PreferredForm::Canonical => {
+                        // Return canonical S-expression text for LLM clients
+                        let nodes: Vec<String> = results.results.iter()
+                            .map(|r| serialize::canonical(&r.node))
+                            .collect();
+                        serde_json::json!({
+                            "nodes": nodes,
+                            "form": "canonical",
+                            "count": results.results.len(),
+                            "ambiguous": results.ambiguous,
+                        })
+                    }
+                    PreferredForm::Compact => {
+                        // Return compact JSON for service-to-service transport
+                        let nodes: Vec<_> = results.results.iter()
+                            .map(|r| serialize::compact(&r.node, self.store.registry()))
+                            .collect();
+                        serde_json::json!({
+                            "nodes": nodes,
+                            "count": results.results.len(),
+                            "ambiguous": results.ambiguous,
+                        })
+                    }
+                };
 
                 let tool_result = ToolResult {
                     content: vec![ContentBlock::json(json)],
@@ -404,5 +449,69 @@ mod tests {
         let resp = handler.handle(&req);
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, -32601);
+    }
+
+    #[test]
+    fn test_preferred_form_canonical() {
+        let handler = make_handler();
+        // Initialize with preferred_form: canonical
+        let init_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: serde_json::json!(1),
+            method: "initialize".into(),
+            params: Some(serde_json::json!({
+                "capabilities": {"factum": {"preferred_form": "canonical"}}
+            })),
+        };
+        handler.handle(&init_req);
+
+        // Query — should return canonical form
+        let query_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: serde_json::json!(2),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "factum_query",
+                "arguments": {"query": "(instance-of @ACME-CORP ?type)"}
+            })),
+        };
+        let resp = handler.handle(&query_req);
+        assert!(resp.result.is_some());
+        let content = resp.result.unwrap()["content"][0]["json"].clone();
+        assert_eq!(content["form"], "canonical");
+        // Canonical nodes should be strings (S-expressions), not objects
+        assert!(content["nodes"][0].is_string());
+    }
+
+    #[test]
+    fn test_preferred_form_default_compact() {
+        let handler = make_handler();
+        // Initialize WITHOUT preferred_form — should default to compact
+        let init_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: serde_json::json!(1),
+            method: "initialize".into(),
+            params: Some(serde_json::json!({
+                "capabilities": {"factum": {}}
+            })),
+        };
+        handler.handle(&init_req);
+
+        // Query — should return compact form (no "form" field)
+        let query_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: serde_json::json!(2),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": "factum_query",
+                "arguments": {"query": "(instance-of @ACME-CORP ?type)"}
+            })),
+        };
+        let resp = handler.handle(&query_req);
+        assert!(resp.result.is_some());
+        let content = resp.result.unwrap()["content"][0]["json"].clone();
+        // Compact form: no "form" field present
+        assert!(content.get("form").is_none());
+        assert!(content["count"].as_u64().unwrap_or(0) > 0);
     }
 }

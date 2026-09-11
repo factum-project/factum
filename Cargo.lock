@@ -204,6 +204,7 @@ dependencies = [
  "chrono",
  "factum-core",
  "factum-rt",
+ "parking_lot",
  "serde",
  "serde_json",
  "smol_str",

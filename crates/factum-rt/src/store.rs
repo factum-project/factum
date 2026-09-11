@@ -16,6 +16,8 @@ use ahash::AHashMap;
 use factum_core::types::*;
 use factum_core::morphemes::MorphemeRegistry;
 use crate::permission::PermissionContext;
+use crate::subscription::SubscriptionManager;
+use crate::verifier::{VerifierRegistry, Verdict};
 
 /// The main Factum store.
 ///
@@ -51,6 +53,12 @@ pub struct FactumStore {
 
     /// Write-ahead log for event replay (in-memory for v0.1).
     wal: RwLock<Vec<WalEntry>>,
+
+    /// Subscription manager for push notifications on insert/retract.
+    subscriptions: SubscriptionManager,
+
+    /// Optional verifier registry for node validation on insert.
+    verifiers: RwLock<Option<VerifierRegistry>>,
 }
 
 /// WAL entry for event sourcing.
@@ -88,6 +96,8 @@ impl FactumStore {
             by_validity: RwLock::new(BTreeMap::new()),
             registry,
             wal: RwLock::new(Vec::new()),
+            subscriptions: SubscriptionManager::new(),
+            verifiers: RwLock::new(None),
         }
     }
 
@@ -101,11 +111,41 @@ impl FactumStore {
         &self.registry
     }
 
+    /// Get the subscription manager for creating subscriptions.
+    pub fn subscriptions(&self) -> &SubscriptionManager {
+        &self.subscriptions
+    }
+
+    /// Enable built-in verifiers (SchemaVerifier + ArithmeticVerifier).
+    /// Once enabled, all subsequent inserts will be verified before storage.
+    pub fn enable_verifiers(&self) {
+        let reg = VerifierRegistry::with_builtins(self.registry.clone());
+        *self.verifiers.write() = Some(reg);
+    }
+
+    /// Enable a custom verifier registry.
+    pub fn set_verifiers(&self, reg: VerifierRegistry) {
+        *self.verifiers.write() = Some(reg);
+    }
+
+    /// Disable all verifiers.
+    pub fn disable_verifiers(&self) {
+        *self.verifiers.write() = None;
+    }
+
     // ─── Write Operations ──────────────────────────────
 
     /// Insert a new node. Fails if a node with the same ID already exists.
+    /// If verifiers are enabled, the node is verified before insertion.
     pub fn insert(&self, node: Node) -> Result<(), StoreError> {
         let id = node.id.clone();
+
+        // Verify (if verifiers are enabled)
+        if let Some(ref vr) = *self.verifiers.read() {
+            if let Verdict::Fail(reason) = vr.verify(&node) {
+                return Err(StoreError::InvalidNode(reason));
+            }
+        }
 
         // Check for duplicate
         {
@@ -130,13 +170,27 @@ impl FactumStore {
         }
 
         // Insert into main store
-        self.nodes.write().insert(id, Arc::new(node));
+        let arc_node = Arc::new(node);
+        self.nodes.write().insert(id, arc_node.clone());
+
+        // Notify subscribers
+        self.subscriptions.notify_insert(&arc_node);
 
         Ok(())
     }
 
     /// Insert multiple nodes atomically (all-or-nothing).
+    /// If verifiers are enabled, each node is verified before any insertion.
     pub fn insert_batch(&self, nodes: Vec<Node>) -> Result<(), StoreError> {
+        // Verify all nodes first (if verifiers enabled)
+        if let Some(ref vr) = *self.verifiers.read() {
+            for node in &nodes {
+                if let Verdict::Fail(reason) = vr.verify(node) {
+                    return Err(StoreError::InvalidNode(reason));
+                }
+            }
+        }
+
         // Pre-check: no duplicates within batch or with existing
         {
             let store = self.nodes.read();
@@ -158,7 +212,9 @@ impl FactumStore {
                     .or_default()
                     .push(node.id.clone());
             }
-            self.nodes.write().insert(node.id.clone(), Arc::new(node));
+            let arc_node = Arc::new(node);
+            self.nodes.write().insert(arc_node.id.clone(), arc_node.clone());
+            self.subscriptions.notify_insert(&arc_node);
         }
 
         self.wal.write().push(WalEntry::Checkpoint);
@@ -202,6 +258,9 @@ impl FactumStore {
                 }
             }
         }
+
+        // Notify subscribers of the retraction (with full cascade list)
+        self.subscriptions.notify_retract(id, &all_retracted);
 
         Ok(all_retracted)
     }
@@ -529,5 +588,112 @@ mod tests {
 
         let valid = store.lookup_valid_now();
         assert_eq!(valid.len(), 2); // n001 (forever) + n002 (current window)
+    }
+
+    #[test]
+    fn test_subscription_on_insert() {
+        let store = FactumStore::with_seeds();
+        let sub = store.subscriptions().subscribe("instance-of");
+
+        store.insert(make_node("n001", "instance-of",
+            vec![Term::ent("X"), Term::ent("Y")])).unwrap();
+
+        assert!(sub.has_events());
+        let events = sub.poll();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn test_subscription_on_retract() {
+        let store = FactumStore::with_seeds();
+        let sub = store.subscriptions().subscribe("*");
+
+        store.insert(make_node("n001", "instance-of",
+            vec![Term::ent("X"), Term::ent("Y")])).unwrap();
+        // Drain insert events
+        sub.poll();
+
+        store.retract(&NodeId::new("n001")).unwrap();
+
+        assert!(sub.has_events());
+        let events = sub.poll();
+        assert_eq!(events.len(), 1);
+        // Verify it's a Retracted event
+        assert!(matches!(events[0], crate::subscription::SubscriptionEvent::Retracted(_, _)));
+    }
+
+    #[test]
+    fn test_subscription_pattern_filter_via_store() {
+        let store = FactumStore::with_seeds();
+        let sub = store.subscriptions().subscribe("located-in");
+
+        // Insert a non-matching node — should not trigger
+        store.insert(make_node("n001", "instance-of",
+            vec![Term::ent("X"), Term::ent("Y")])).unwrap();
+        assert!(!sub.has_events());
+
+        // Insert a matching node — should trigger
+        store.insert(make_node("n002", "located-in",
+            vec![Term::ent("X"), Term::ent("Z")])).unwrap();
+        assert!(sub.has_events());
+    }
+
+    #[test]
+    fn test_verifier_rejects_invalid_node() {
+        let store = FactumStore::with_seeds();
+        store.enable_verifiers();
+
+        // shareholder-major expects 4 args, give it only 2
+        let bad_node = Node::new("n001",
+            Predicate::new("shareholder-major")
+                .with_args(vec![Term::ent("X"), Term::ent("Y")]));
+        let result = store.insert(bad_node);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            StoreError::InvalidNode(msg) => assert!(msg.contains("arity")),
+            other => panic!("expected InvalidNode, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_verifier_accepts_valid_node() {
+        let store = FactumStore::with_seeds();
+        store.enable_verifiers();
+
+        // instance-of expects 2 args — correct
+        let good_node = make_node("n001", "instance-of",
+            vec![Term::ent("X"), Term::ent("organization")]);
+        let result = store.insert(good_node);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verifier_disabled_by_default() {
+        let store = FactumStore::with_seeds();
+
+        // Without enabling verifiers, bad arity should still be accepted
+        let bad_node = Node::new("n001",
+            Predicate::new("shareholder-major")
+                .with_args(vec![Term::ent("X"), Term::ent("Y")]));
+        let result = store.insert(bad_node);
+        assert!(result.is_ok()); // no verifier running
+    }
+
+    #[test]
+    fn test_verifier_batch_rejects_all() {
+        let store = FactumStore::with_seeds();
+        store.enable_verifiers();
+
+        // One bad node in batch should reject the entire batch
+        let nodes = vec![
+            make_node("n001", "instance-of", vec![Term::ent("X"), Term::ent("Y")]),
+            Node::new("n002",
+                Predicate::new("shareholder-major")
+                    .with_args(vec![Term::ent("X"), Term::ent("Y")])), // bad arity
+        ];
+        let result = store.insert_batch(nodes);
+        assert!(result.is_err());
+        // Neither should be inserted
+        assert_eq!(store.len(), 0);
     }
 }
