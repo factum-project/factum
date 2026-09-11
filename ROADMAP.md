@@ -15,7 +15,7 @@ This roadmap tracks what's planned, in priority order. Items before the M2 line 
 - ✅ factum-core: data model, lexer, parser, serialization
 - ✅ factum-rt: in-memory store, query, arbitration, permissions, verifiers
 - ✅ factum-mcp: protocol layer + request handler (JSON-RPC 2.0, MCP 2025-06-18)
-- 📋 factum-mcp: stdio transport (verify end-to-end with real stdin/stdout)
+- ✅ factum-mcp: stdio transport (verified end-to-end with real stdin/stdout)
 - 📋 factum-mcp: Streamable HTTP transport (requires web framework dependency)
 - ✅ factum-bench: round-trip, token efficiency, query perf
 - ✅ All tests passing (see CI badge in README)
@@ -57,7 +57,10 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 - 📋 MVCC optimistic concurrency with merge/abort policy
 
 ### MCP Integration
-- 📋 stdio transport verified end-to-end (real stdin/stdout, not just unit tests)
+- ✅ stdio transport verified end-to-end (real stdin/stdout, not just unit tests)
+- ✅ `preferred_form` negotiation: canonical S-expression serving for LLM clients
+- ✅ Store ↔ SubscriptionManager integration: insert/retract notifications wired
+- ✅ Store ↔ VerifierRegistry integration: optional pre-insert verification (opt-in)
 - 📋 Streamable HTTP transport (requires web framework: axum or hyper)
 - 📋 Real Claude Code integration test (not self-tested handler)
 - 📋 Real Cursor integration test
@@ -82,7 +85,7 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 
 ### Benchmarks
 - ✅ **P0**: Replace heuristic token estimator with real tokenizer (issue #9 ✅) — **confirmed**: canonical −62% tokens, compact −53% tokens
-- 📋 **Form-positioning decision**: Real tokenizer data confirms canonical (−62% tokens) beats compact (−53% tokens) for LLM context. Implement `capabilities.factum.preferred_form` negotiation: serve canonical to LLM clients, reposition compact as storage/service-to-service format.
+- ✅ **Form-positioning decision**: `capabilities.factum.preferred_form` negotiation implemented. When `"canonical"`, query results return as S-expression text (−62% tokens for LLM context). When absent or `"compact"`, defaults to compact JSON.
 - 📋 Compact form vs Markdown/JSON efficiency data (published)
 - 📋 Factum-loses dimensions explicitly shown (esp. vs Markdown — Markdown likely wins on tokens due to zero metadata)
 - 📋 Grounded QA benchmark (multi-hop fact QA with verifiable citations)

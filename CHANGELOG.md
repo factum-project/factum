@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **preferred_form negotiation** (spec/compact-form.md §8): `McpHandler` reads `capabilities.factum.preferred_form` during initialize. When `"canonical"`, `factum_query` results return as S-expression text (−62% tokens vs JSON for LLM context). When absent or `"compact"`, defaults to compact JSON. Invalid values safely fall back to compact.
+- **Store ↔ SubscriptionManager integration**: `FactumStore` now holds a `SubscriptionManager` instance. `insert()`, `insert_batch()`, and `retract()` call `notify_insert()` / `notify_retract()` respectively. Public `subscriptions()` accessor for creating subscriptions.
+- **Store ↔ VerifierRegistry integration**: `FactumStore` now holds an optional `VerifierRegistry`. `enable_verifiers()` / `set_verifiers()` / `disable_verifiers()` methods. `insert()` and `insert_batch()` verify before storage when enabled. Off by default — opt-in, no breaking change. Batch verification is atomic: one bad node rejects the entire batch.
 - **MCP stdio transport**: `factum-mcp-server` binary reads newline-delimited JSON-RPC from stdin, writes responses to stdout. Verified end-to-end: initialize → insert → query flow works with real stdin/stdout.
 - **Real tokenizer measurement** (issue #9 ✅): `tiktoken-rs` (o200k_base / GPT-4o) replaces heuristic estimator. Real token counts: canonical 238 tokens (−62% vs JSON), compact 290 tokens (−53% vs JSON), verbose JSON 623 tokens. Heuristic estimator retained as fallback, marked with 20.7% / 43.7% estimation error.
 - **Getting Started guide** (`docs/getting-started-mcp.md`): step-by-step MCP server setup, Claude Code / Cursor configuration, example insert + query flows, troubleshooting.
@@ -17,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Token efficiency table updated with real o200k_base measurements**: compact −53% tokens (was −12% estimated), canonical −62% tokens (was −66% estimated). Key finding confirmed: canonical form is more token-efficient than compact form.
-- **Form-positioning decision confirmed** (spec/compact-form.md §8): Real tokenizer data confirms canonical beats compact on tokens. `capabilities.factum.preferred_form` negotiation should serve canonical to LLM clients, reposition compact as storage/service-to-service format.
+- **Form-positioning decision confirmed** (spec/compact-form.md §8): Real tokenizer data confirms canonical beats compact on tokens. `capabilities.factum.preferred_form` negotiation implemented — serves canonical to LLM clients, reposition compact as storage/service-to-service format.
 - **Byte efficiency table updated**: compact 643 bytes (−68%), canonical 650 bytes (−67%), JSON 1994 bytes (baseline), Markdown 420 bytes (−79%). Previous numbers used a smaller JSON baseline.
 - **ROADMAP M2**: issue #9 marked ✅, form-positioning decision updated from "pending" to "confirmed".
 
@@ -109,10 +112,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Known Limitations
 - Storage is in-memory only (RocksDB backend is planned)
 - Morpheme vocabulary is 24 seeds (target: 200-500)
-- MCP transport layer not implemented (protocol/handler only; stdio unverified, HTTP not started)
+- MCP transport: stdio verified, HTTP not started
 - No real MCP host integration testing (Claude Code, Cursor)
 - No corpus converters (Wikidata, Mathlib)
 - No Lean/Z3 verifier integration
 - Semantic round-trip (factum-l latent projection) not started
 - No Inspector (visual debugger)
 - Identifier charset is ASCII-only (Unicode deferred to future spec version)
+- Verifiers are opt-in (off by default); subscription manager does not persist events across sessions
