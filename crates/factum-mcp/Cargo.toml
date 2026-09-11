@@ -13,3 +13,7 @@ serde_json.workspace = true
 chrono.workspace = true
 smol_str.workspace = true
 thiserror.workspace = true
+
+[[bin]]
+name = "factum-mcp-server"
+path = "src/bin/stdio.rs"

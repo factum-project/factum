@@ -12,7 +12,7 @@ Factum is a structured knowledge representation language designed as a **native 
 
 | Layer | What It Means | Status |
 |-------|--------------|--------|
-| **LLM Read** | LLM receives Factum-F as context payload via MCP — lower token overhead than verbose JSON | ✅ Architecture ready, token efficiency estimated (heuristic; real measurement tracked in issue #9) |
+| **LLM Read** | LLM receives Factum-F as context payload via MCP — lower token overhead than verbose JSON | ✅ Architecture ready, token efficiency measured (real o200k_base: canonical −62%, compact −53% vs JSON) |
 | **LLM Write** | LLM generates Factum-F nodes directly — parse uniqueness guarantees one valid interpretation, error classes enable self-correction | ✅ Architecture ready, see [authoring guide](docs/authoring-for-llms.md) (draft) |
 | **LLM Think** | factum-l: encode Factum-F into continuous thought vector, LLM reasons in latent space, decode back for audit | 🔬 M3 research item — not started, not blocking layers 1-2 |
 
@@ -121,7 +121,7 @@ cargo +nightly fuzz run fuzz_parser -- -max_total_time=600
 
 ## Token Efficiency — The LLM-Native Metric
 
-> **TL;DR: Factum compact form saves ~76% bytes and ~12% tokens vs verbose JSON with the same metadata. Byte savings ≠ token savings — S-expression parentheses and colons tokenize differently than JSON's quoted strings. Both numbers are honest and estimated (real measurement: issue #9).**
+> **TL;DR: Factum compact form saves ~68% bytes and ~54% tokens vs verbose JSON. Canonical form saves ~62% tokens — the form designed for correctness is also the most token-efficient. All numbers measured with real o200k_base (GPT-4o) tokenizer via tiktoken-rs.**
 
 Bytes matter for storage; **tokens matter for LLMs**. A format that saves bytes but not tokens doesn't help an LLM's context window. Here's the full picture:
 
@@ -131,26 +131,27 @@ All byte percentages use **pretty JSON with the same 7-tuple metadata** as the b
 
 | Format | Bytes (5 nodes) | vs pretty JSON | What it includes |
 |--------|-----------------|----------------|------------------|
-| Factum compact (JSON) | ~350 | **−76%** | Full 7-tuple: morpheme indices + numeric tags |
-| Factum canonical | 649 | −55% | Full 7-tuple: predicate + validity + provenance + confidence + authority + permissions + deps |
-| Markdown | 419 | −71% | Only the assertion text — no provenance, no confidence, no permissions |
-| JSON (pretty) | 1448 | baseline | Same 7-tuple metadata in verbose JSON encoding |
+| Factum compact (JSON) | 643 | **−68%** | Full 7-tuple: morpheme indices + numeric tags |
+| Factum canonical | 650 | −67% | Full 7-tuple: predicate + validity + provenance + confidence + authority + permissions + deps |
+| Markdown | 420 | −79% | Only the assertion text — no provenance, no confidence, no permissions |
+| JSON (pretty) | 1994 | baseline | Same 7-tuple metadata in verbose JSON encoding |
 
-### Token Efficiency (heuristic estimate, ±15% of real o200k_base)
+### Token Efficiency (measured with real o200k_base tokenizer — GPT-4o)
 
-| Format | Est. tokens (5 nodes) | vs verbose JSON | Notes |
+| Format | Real tokens (5 nodes) | vs verbose JSON | Notes |
 |--------|-----------------------|-----------------|-------|
-| Factum compact (JSON) | ~350 | **−12%** | JSON keys replaced by numeric tags, but values still tokenize similarly |
-| Factum canonical | ~134 | −66% | S-expression is surprisingly token-efficient (fewer delimiters than JSON) |
-| JSON (pretty) | ~399 | baseline | Verbose keys (`"provenance"`, `"confidence"`) each cost multiple tokens |
+| Factum compact (JSON) | 290 | **−53%** | JSON keys replaced by numeric tags; significantly fewer tokens than verbose JSON |
+| Factum canonical | 238 | **−62%** | S-expression is the most token-efficient form — BPE merges parens with adjacent tokens |
+| Markdown | 181 | −71% | No metadata at all — unfair comparison (no provenance, no confidence) |
+| JSON (pretty) | 623 | baseline | Verbose keys (`"provenance"`, `"confidence"`) each cost multiple tokens |
 
-> **⚠️ These are heuristic estimates, not real tokenizer output.** The heuristic approximates o200k_base (GPT-4o) behavior within ±15%. For production claims, replace with real tokenizer measurement (`tiktoken-rs`). See good first issues for a tracking item.
+> **✅ These are real tokenizer measurements** (o200k_base / GPT-4o via `tiktoken-rs`). Run `cargo test -p factum-bench test_token_efficiency_real_tokenizer -- --nocapture` to reproduce.
 
-**Why token savings < byte savings for compact form**: The compact form replaces verbose JSON keys (`"confidence"`, `"provenance"`) with numeric tags (`"6"`, `"5"`), which saves bytes. But BPE tokenizers split JSON delimiters (`{`, `}`, `"`, `:`) into individual tokens — and compact form still uses JSON structure. The byte savings from shorter keys are partially eaten by tokenizer behavior.
+**Key finding — canonical beats compact on tokens**: The canonical S-expression form (238 tokens) is more token-efficient than the compact JSON form (290 tokens). BPE tokenizers split JSON delimiters (`{`, `}`, `"`, `:`) into individual tokens, while S-expression parentheses and whitespace are frequently merged with adjacent tokens. **The form designed for correctness is also the most token-efficient form for LLM context windows.**
 
-**Why canonical form has better token efficiency than compact**: S-expressions use parentheses and whitespace, which BPE tokenizers often merge with adjacent tokens. JSON's `{`, `}`, `"`, `:` are more likely to become separate tokens. This means the canonical S-expression form is actually more token-efficient than the compact JSON form — a counterintuitive result that only token-level measurement reveals.
+**Form-positioning implication**: This confirms the heuristic finding. The proposed `capabilities.factum.preferred_form` negotiation (see `spec/compact-form.md` §8) should serve canonical to LLM clients and reposition compact as a storage/service-to-service format.
 
-**The fair comparison is Factum compact vs pretty-JSON-with-same-metadata** — compact saves 76% bytes and ~12% tokens.
+**The fair comparison is Factum compact vs pretty-JSON-with-same-metadata** — compact saves 68% bytes and 53% tokens.
 
 ## Relationship to Other Formats
 

@@ -172,6 +172,68 @@ pub fn estimate_tokens(text: &str) -> usize {
     count
 }
 
+/// Measure real token counts using tiktoken-rs (o200k_base = GPT-4o tokenizer).
+///
+/// This replaces the heuristic estimator with actual BPE tokenization.
+/// Requires the `tiktoken-rs` dev-dependency.
+///
+/// Returns token counts for compact, canonical, and verbose JSON forms.
+#[cfg(test)]
+fn measure_real_tokens(nodes: &[Node], registry: &factum_core::morphemes::MorphemeRegistry) -> RealTokenResult {
+    let compact = serialize::compact_all(nodes, registry);
+    let canonical = serialize::canonical_all(nodes);
+
+    let verbose_json = serde_json::to_string_pretty(&nodes.iter().map(|n| {
+        serde_json::json!({
+            "id": n.id.to_string(),
+            "predicate": {
+                "head": match &n.predicate.head {
+                    PredicateHead::Name(s) => s.to_string(),
+                    PredicateHead::Id(id) => format!("M{}", id.0),
+                },
+                "args": n.predicate.args.iter().map(term_to_json).collect::<Vec<_>>(),
+            },
+            "validity": format!("{:?}", n.validity),
+            "provenance": format!("{:?}", n.provenance),
+            "confidence": n.confidence.0,
+            "authority": n.authority.0,
+            "permissions": n.permissions.0,
+        })
+    }).collect::<Vec<_>>()).unwrap();
+
+    let markdown = to_markdown(nodes);
+
+    let bpe = tiktoken_rs::o200k_base().unwrap();
+
+    let compact_tokens = bpe.encode_with_special_tokens(&compact).len();
+    let canonical_tokens = bpe.encode_with_special_tokens(&canonical).len();
+    let json_tokens = bpe.encode_with_special_tokens(&verbose_json).len();
+    let markdown_tokens = bpe.encode_with_special_tokens(&markdown).len();
+
+    RealTokenResult {
+        compact_tokens,
+        compact_bytes: compact.len(),
+        canonical_tokens,
+        canonical_bytes: canonical.len(),
+        json_tokens,
+        json_bytes: verbose_json.len(),
+        markdown_tokens,
+        markdown_bytes: markdown.len(),
+    }
+}
+
+#[cfg(test)]
+struct RealTokenResult {
+    compact_tokens: usize,
+    compact_bytes: usize,
+    canonical_tokens: usize,
+    canonical_bytes: usize,
+    json_tokens: usize,
+    json_bytes: usize,
+    markdown_tokens: usize,
+    markdown_bytes: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,6 +314,55 @@ mod tests {
             compact_tokens, json_tokens);
 
         // Token savings should be positive
+        assert!(compact_savings > 0.0,
+            "compact token savings should be positive, got {:.1}%", compact_savings);
+    }
+
+    /// Real tokenizer measurement using tiktoken-rs (o200k_base = GPT-4o).
+    ///
+    /// This is the definitive token efficiency test — no heuristics, actual BPE.
+    /// Results from this test are the numbers that should appear in the README.
+    #[test]
+    fn test_token_efficiency_real_tokenizer() {
+        let nodes = sample_knowledge_nodes();
+        let registry = factum_core::morphemes::MorphemeRegistry::with_seeds();
+
+        let result = measure_real_tokens(&nodes, &registry);
+
+        let compact_savings = (1.0 - (result.compact_tokens as f64 / result.json_tokens as f64)) * 100.0;
+        let canonical_savings = (1.0 - (result.canonical_tokens as f64 / result.json_tokens as f64)) * 100.0;
+        let compact_byte_savings = (1.0 - (result.compact_bytes as f64 / result.json_bytes as f64)) * 100.0;
+
+        println!("\n=== Token Efficiency (REAL o200k_base tokenizer — GPT-4o) ===");
+        println!("Factum compact:   {} tokens ({} bytes)", result.compact_tokens, result.compact_bytes);
+        println!("Factum canonical: {} tokens ({} bytes)", result.canonical_tokens, result.canonical_bytes);
+        println!("Verbose JSON:     {} tokens ({} bytes)", result.json_tokens, result.json_bytes);
+        println!("Markdown:         {} tokens ({} bytes)", result.markdown_tokens, result.markdown_bytes);
+        println!("---");
+        println!("Compact vs JSON:  {:.1}% token savings, {:.1}% byte savings", compact_savings, compact_byte_savings);
+        println!("Canonical vs JSON: {:.1}% token savings", canonical_savings);
+        println!("---");
+
+        // Compare heuristic vs real
+        let compact_str = serialize::compact_all(&nodes, &registry);
+        let canonical_str = serialize::canonical_all(&nodes);
+        let heuristic_compact = estimate_tokens(&compact_str);
+        let heuristic_canonical = estimate_tokens(&canonical_str);
+        println!("Heuristic estimate: compact={}, canonical={}", heuristic_compact, heuristic_canonical);
+        println!("Real tokenizer:     compact={}, canonical={}", result.compact_tokens, result.canonical_tokens);
+        let compact_error = ((result.compact_tokens as f64 - heuristic_compact as f64) / result.compact_tokens as f64).abs() * 100.0;
+        let canonical_error = ((result.canonical_tokens as f64 - heuristic_canonical as f64) / result.canonical_tokens as f64).abs() * 100.0;
+        println!("Estimation error:  compact={:.1}%, canonical={:.1}%", compact_error, canonical_error);
+
+        // Assertions with real tokenizer
+        assert!(result.compact_tokens < result.json_tokens,
+            "compact ({} tokens) should be smaller than JSON ({} tokens)",
+            result.compact_tokens, result.json_tokens);
+
+        assert!(result.canonical_tokens < result.json_tokens,
+            "canonical ({} tokens) should be smaller than JSON ({} tokens)",
+            result.canonical_tokens, result.json_tokens);
+
         assert!(compact_savings > 0.0,
             "compact token savings should be positive, got {:.1}%", compact_savings);
     }

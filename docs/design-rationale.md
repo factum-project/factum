@@ -14,18 +14,17 @@ The reasons:
   trust foundation — if parse is non-deterministic, round-trip testing is
   meaningless.
 - **LLM token efficiency (measured)**: The canonical S-expression form is
-  approximately **−66% tokens** vs verbose JSON with the same metadata, while
-  the compact JSON form is only −12% tokens (heuristic estimate, ±15% of
-  real o200k_base; tracked in issue #9 for real tokenizer confirmation).
+  approximately **−62% tokens** vs verbose JSON with the same metadata, while
+  the compact JSON form is −53% tokens (real o200k_base measurement via
+  tiktoken-rs, issue #9 resolved).
   This is counterintuitive: the compact form was designed for token economy,
   but BPE tokenizers split JSON delimiters (`{`, `}`, `"`, `:`) into individual
   tokens, while S-expression parentheses and whitespace are frequently merged
   with adjacent tokens. The form designed for correctness (canonical, fully
   parenthesized) happens to also be the most token-efficient form for LLM
   context windows — a quantitative validation of the design premise.
-  If confirmed by real tokenizer measurement, this will trigger a
-  form-positioning decision: serve canonical to LLM clients, compact to
-  storage/service-to-service paths (see ROADMAP M2).
+  This finding triggers the form-positioning decision: serve canonical to LLM
+  clients, compact to storage/service-to-service paths (see ROADMAP M2).
 - **Human readability is not a goal**: Factum-F is designed for LLM read/write,
   not human reading. The compact JSON form is the transport encoding; the
   canonical S-expression form is the canonical/hashing form.

@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Factum — 面向 LLM 的原生知识语言</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-sec: #f8f7f5;
+  --bg-ter: #f1efe8;
+  --text: #1a1a1a;
+  --text-sec: #666;
+  --text-ter: #999;
+  --border: rgba(0,0,0,0.08);
+  --border-sec: rgba(0,0,0,0.15);
+  --purple: #534AB7;
+  --purple-light: #EEEDFE;
+  --purple-mid: #AFA9EC;
+  --teal: #0F6E56;
+  --teal-light: #E1F5EE;
+  --teal-mid: #5DCAA5;
+  --coral: #D85A30;
+  --coral-light: #FAECE7;
+  --blue: #185FA5;
+  --blue-light: #E6F1FB;
+  --blue-mid: #85B7EB;
+  --amber: #BA7517;
+  --amber-light: #FAEEDA;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans CJK SC', sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: var(--sans); background: var(--bg-ter); color: var(--text); line-height: 1.7; font-size: 14px; }
+.container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+/* Hero */
+.hero { background: var(--bg); padding: 60px 0 40px; border-bottom: 0.5px solid var(--border); }
+.hero h1 { font-size: 28px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.3px; }
+.hero .tagline { font-size: 15px; color: var(--text-sec); margin-bottom: 16px; }
+.hero .badges { display: flex; gap: 8px; flex-wrap: wrap; }
+.badge { font-size: 12px; padding: 3px 10px; border-radius: 20px; font-weight: 500; }
+.badge-purple { background: var(--purple-light); color: var(--purple); }
+.badge-teal { background: var(--teal-light); color: var(--teal); }
+.badge-blue { background: var(--blue-light); color: var(--blue); }
+.badge-amber { background: var(--amber-light); color: var(--amber); }
+.hero-links { margin-top: 20px; display: flex; gap: 16px; }
+.hero-links a { font-size: 13px; color: var(--blue); text-decoration: none; }
+.hero-links a:hover { text-decoration: underline; }
+
+/* Nav */
+nav { background: var(--bg); border-bottom: 0.5px solid var(--border); position: sticky; top: 0; z-index: 100; }
+nav .container { display: flex; gap: 0; overflow-x: auto; }
+nav a { padding: 12px 16px; font-size: 13px; color: var(--text-sec); text-decoration: none; white-space: nowrap; border-bottom: 2px solid transparent; transition: all 0.15s; }
+nav a:hover { color: var(--text); }
+nav a.active { color: var(--purple); border-bottom-color: var(--purple); }
+
+/* Sections */
+section { padding: 48px 0; border-bottom: 0.5px solid var(--border); }
+section h2 { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+section .lead { font-size: 14px; color: var(--text-sec); margin-bottom: 24px; }
+
+/* Cards */
+.card { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 16px; }
+.card h3 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+
+/* Code blocks */
+.code-block { background: #1e1e2e; color: #cdd6f4; border-radius: var(--radius-sm); padding: 16px 20px; font-family: var(--mono); font-size: 13px; line-height: 1.8; overflow-x: auto; margin: 12px 0; white-space: pre; }
+.code-block .kw { color: #cba6f7; }
+.code-block .str { color: #a6e3a1; }
+.code-block .num { color: #fab387; }
+.code-block .com { color: #6c7086; font-style: italic; }
+.code-block .ent { color: #89b4fa; }
+.code-block .var { color: #f9e2af; }
+.code-block .sym { color: #f38ba8; }
+.code-block .date { color: #94e2d5; }
+
+/* Tuple visualizer */
+.tuple-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 16px 0; }
+.tuple-cell { background: var(--bg-sec); border: 0.5px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; cursor: pointer; transition: all 0.2s; position: relative; }
+.tuple-cell:hover { border-color: var(--purple-mid); transform: translateY(-1px); }
+.tuple-cell .field-num { font-size: 11px; color: var(--text-ter); font-weight: 500; }
+.tuple-cell .field-name { font-size: 13px; font-weight: 600; margin-top: 2px; }
+.tuple-cell .field-type { font-size: 11px; color: var(--text-sec); font-family: var(--mono); margin-top: 2px; }
+.tuple-cell .field-desc { font-size: 12px; color: var(--text-sec); margin-top: 6px; display: none; }
+.tuple-cell.expanded .field-desc { display: block; }
+.tuple-cell.core { border-left: 3px solid var(--purple); }
+.tuple-cell.meta { border-left: 3px solid var(--text-ter); }
+
+/* Stepper */
+.stepper { margin: 20px 0; }
+.stepper-nav { display: flex; gap: 0; margin-bottom: 16px; }
+.stepper-nav button { flex: 1; padding: 10px 8px; border: 0.5px solid var(--border); background: var(--bg); font-size: 12px; color: var(--text-sec); cursor: pointer; transition: all 0.15s; border-right: none; }
+.stepper-nav button:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.stepper-nav button:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; border-right: 0.5px solid var(--border); }
+.stepper-nav button.active { background: var(--purple); color: white; border-color: var(--purple); }
+.stepper-content { background: var(--bg-sec); border: 0.5px solid var(--border); border-radius: var(--radius-sm); padding: 20px 24px; min-height: 180px; }
+.stepper-dots { display: flex; gap: 6px; justify-content: center; margin-top: 12px; }
+.stepper-dots .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-sec); transition: all 0.2s; }
+.stepper-dots .dot.active { background: var(--purple); width: 24px; border-radius: 4px; }
+.step-title { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+.step-desc { font-size: 13px; color: var(--text-sec); margin-bottom: 12px; }
+
+/* Provenance levels */
+.prov-list { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+.prov-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg-sec); border: 0.5px solid var(--border); border-radius: var(--radius-sm); border-left: 3px solid; transition: all 0.2s; cursor: pointer; }
+.prov-item:hover { transform: translateX(2px); }
+.prov-item .prov-level { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+.prov-item .prov-name { font-size: 14px; font-weight: 500; }
+.prov-item .prov-desc { font-size: 12px; color: var(--text-sec); }
+.prov-item .prov-trust { font-size: 11px; color: var(--text-ter); margin-left: auto; }
+
+/* Animation container */
+.anim-container { background: var(--bg-sec); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 24px; margin: 16px 0; overflow: hidden; }
+.anim-node { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-family: var(--mono); font-size: 13px; }
+.anim-token { display: inline-block; padding: 2px 6px; border-radius: 4px; opacity: 0; transform: translateY(4px); transition: all 0.3s; }
+.anim-token.visible { opacity: 1; transform: translateY(0); }
+.anim-label { font-size: 12px; color: var(--text-sec); margin-bottom: 8px; }
+
+/* Token chart */
+.chart-wrapper { position: relative; width: 100%; height: 320px; margin: 16px 0; }
+
+/* MCP architecture */
+.mcp-flow { display: flex; flex-direction: column; gap: 0; margin: 20px 0; }
+.mcp-layer { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius-sm); padding: 16px 20px; display: flex; align-items: center; gap: 16px; position: relative; }
+.mcp-layer .layer-icon { width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; flex-shrink: 0; }
+.mcp-layer .layer-content { flex: 1; }
+.mcp-layer .layer-name { font-size: 14px; font-weight: 600; }
+.mcp-layer .layer-desc { font-size: 12px; color: var(--text-sec); }
+.mcp-arrow { text-align: center; font-size: 18px; color: var(--text-ter); line-height: 1; padding: 4px 0; }
+
+/* Conflict policies */
+.policy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0; }
+.policy-card { background: var(--bg-sec); border: 0.5px solid var(--border); border-radius: var(--radius-sm); padding: 16px; }
+.policy-card .policy-name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.policy-card .policy-desc { font-size: 12px; color: var(--text-sec); }
+.policy-card .policy-result { font-size: 11px; margin-top: 8px; padding: 4px 8px; border-radius: 4px; display: inline-block; }
+
+/* Comparison table */
+.compare-table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
+.compare-table th { text-align: left; padding: 10px 12px; background: var(--bg-sec); border-bottom: 0.5px solid var(--border-sec); font-weight: 600; font-size: 12px; color: var(--text-sec); }
+.compare-table td { padding: 10px 12px; border-bottom: 0.5px solid var(--border); }
+.compare-table tr:hover { background: var(--bg-sec); }
+
+/* Stats row */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 16px 0; }
+.stat { background: var(--bg-sec); border-radius: var(--radius-sm); padding: 16px; }
+.stat .stat-num { font-size: 24px; font-weight: 700; }
+.stat .stat-label { font-size: 12px; color: var(--text-sec); margin-top: 2px; }
+
+/* Roadmap */
+.roadmap-timeline { position: relative; padding-left: 24px; margin: 20px 0; }
+.roadmap-timeline::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: var(--border-sec); }
+.milestone { position: relative; padding-bottom: 24px; }
+.milestone::before { content: ''; position: absolute; left: -20px; top: 4px; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--bg); }
+.milestone.done::before { background: var(--teal); }
+.milestone.progress::before { background: var(--amber); }
+.milestone.planned::before { background: var(--border-sec); }
+.milestone .ms-title { font-size: 14px; font-weight: 600; }
+.milestone .ms-status { font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 10px; margin-left: 8px; }
+.milestone .ms-items { font-size: 13px; color: var(--text-sec); margin-top: 4px; }
+
+/* Footer */
+footer { background: var(--bg); padding: 32px 0; text-align: center; font-size: 12px; color: var(--text-ter); }
+
+/* Utility */
+.flex { display: flex; }
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.mt-16 { margin-top: 16px; }
+.mt-24 { margin-top: 24px; }
+.text-sec { color: var(--text-sec); }
+.text-sm { font-size: 12px; }
+.text-mono { font-family: var(--mono); }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<!-- Hero -->
+<div class="hero">
+<div class="container">
+<h1>Factum</h1>
+<div class="tagline">面向 LLM 的原生知识语言 — 结构化、可溯源、可验证</div>
+<div class="badges">
+<span class="badge badge-purple">v0.1.0-alpha.1</span>
+<span class="badge badge-teal">MIT License</span>
+<span class="badge badge-blue">Rust</span>
+<span class="badge badge-amber">MCP 2025-06-18</span>
+</div>
+<div class="hero-links">
+<a href="https://github.com/factum-project/factum">GitHub</a>
+<a href="https://crates.io/crates/factum-core">crates.io</a>
+<a href="https://github.com/factum-project/factum/blob/main/docs/whitepaper-zh.md">技术白皮书</a>
+<a href="https://github.com/factum-project/factum/blob/main/ROADMAP.md">路线图</a>
+</div>
+</div>
+</div>
+
+<!-- Nav -->
+<nav>
+<div class="container" id="nav">
+<a href="#problem" class="active">问题</a>
+<a href="#tuple">七元组</a>
+<a href="#syntax">语法</a>
+<a href="#provenance">溯源</a>
+<a href="#conflict">冲突仲裁</a>
+<a href="#permission">权限</a>
+<a href="#token">Token 效率</a>
+<a href="#mcp">MCP 集成</a>
+<a href="#compare">对比</a>
+<a href="#roadmap">路线图</a>
+</div>
+</nav>
+
+<!-- Problem -->
+<section id="problem">
+<div class="container">
+<h2>LLM 面临三个知识瓶颈</h2>
+<div class="lead">Factum 不是又一个数据库格式——它是为 LLM 设计的原生知识媒介。</div>
+<div class="card" style="border-left: 3px solid var(--coral);">
+<h3 style="color: var(--coral);">读取瓶颈</h3>
+<p style="font-size: 13px; color: var(--text-sec);">LLM 接收的知识上下文以自然语言为主，缺少溯源、置信度和时间有效性。无法区分"维基百科原文"和"某 LLM 的推断"。</p>
+<p style="font-size: 13px; margin-top: 8px;"><strong>Factum 方案：</strong>每条知识携带七元组元数据，通过 MCP 注入上下文，规范形式比 JSON 省 66% token。</p>
+</div>
+<div class="card" style="border-left: 3px solid var(--amber);">
+<h3 style="color: var(--amber);">写入瓶颈</h3>
+<p style="font-size: 13px; color: var(--text-sec);">LLM 生成的结构化输出缺少语法约束，歧义解析导致不确定性，错误信息无分类，模型无法自我纠正。</p>
+<p style="font-size: 13px; margin-top: 8px;"><strong>Factum 方案：</strong>全括号化 S-expression 保证唯一解析树，7 类错误分类支持 LLM 自我纠正。</p>
+</div>
+<div class="card" style="border-left: 3px solid var(--purple);">
+<h3 style="color: var(--purple);">推理瓶颈</h3>
+<p style="font-size: 13px; color: var(--text-sec);">LLM 的"思考"在隐式权重中，没有结构化知识表示可供可审计推理。</p>
+<p style="font-size: 13px; margin-top: 8px;"><strong>Factum 方案：</strong>factum-l 将知识编码为连续思维向量（M3 研究项），目标语义往返 ≥ 0.95。</p>
+</div>
+</div>
+</section>
+
+<!-- Tuple -->
+<section id="tuple">
+<div class="container">
+<h2>Node 七元组数据模型</h2>
+<div class="lead">每条知识是一个 Node，包含 7 个核心字段 + 2 个运行时元数据。点击字段查看详情。</div>
+<p style="font-size: 13px; color: var(--text-sec); margin-bottom: 12px;">七元组：<span class="text-mono" style="font-size: 12px;">(id, predicate, validity, provenance, confidence, authority, permissions)</span> + deps + status</p>
+<div class="tuple-grid" id="tupleGrid">
+<div class="tuple-cell core" data-field="id">
+<div class="field-num">1 / 7</div>
+<div class="field-name">id</div>
+<div class="field-type">NodeId</div>
+<div class="field-desc">节点唯一标识符，人类可读字符串或 ULID</div>
+</div>
+<div class="tuple-cell core" data-field="predicate">
+<div class="field-num">2 / 7</div>
+<div class="field-name">predicate</div>
+<div class="field-type">Predicate</div>
+<div class="field-desc">内容谓词 — 断言什么。由词素头 + 位置参数 + 命名参数组成</div>
+</div>
+<div class="tuple-cell core" data-field="validity">
+<div class="field-num">3 / 7</div>
+<div class="field-name">validity</div>
+<div class="field-type">Validity</div>
+<div class="field-desc">时间有效性：forever / 有界窗口 / 开放窗口</div>
+</div>
+<div class="tuple-cell core" data-field="provenance">
+<div class="field-num">4 / 7</div>
+<div class="field-name">provenance</div>
+<div class="field-type">Provenance</div>
+<div class="field-desc">溯源链：Verbatim / Summary / Extracted / Derived / Asserted</div>
+</div>
+<div class="tuple-cell core" data-field="confidence">
+<div class="field-num">5 / 7</div>
+<div class="field-name">confidence</div>
+<div class="field-type">f32 [0,1]</div>
+<div class="field-desc">置信度 — 主观度量，不参与精确算术，用于查询过滤</div>
+</div>
+<div class="tuple-cell core" data-field="authority">
+<div class="field-num">6 / 7</div>
+<div class="field-name">authority</div>
+<div class="field-type">f32 [0,1]</div>
+<div class="field-desc">来源权威度 — 冲突仲裁的决胜依据</div>
+</div>
+<div class="tuple-cell core" data-field="permissions">
+<div class="field-num">7 / 7</div>
+<div class="field-name">permissions</div>
+<div class="field-type">u32 bitmask</div>
+<div class="field-desc">权限标签：PUBLIC / INTERNAL / CONFIDENTIAL / RESTRICTED</div>
+</div>
+<div class="tuple-cell meta" data-field="deps">
+<div class="field-num">meta</div>
+<div class="field-name">deps</div>
+<div class="field-type">Vec&lt;NodeId&gt;</div>
+<div class="field-desc">依赖链 — 级联撤回时传播失效</div>
+</div>
+<div class="tuple-cell meta" data-field="status">
+<div class="field-num">meta</div>
+<div class="field-name">status</div>
+<div class="field-type">NodeStatus</div>
+<div class="field-desc">生命周期：Active / Retracted（软删除）/ Pending</div>
+</div>
+</div>
+<div class="stats mt-16">
+<div class="stat"><div class="stat-num">9</div><div class="stat-label">字段总数（7 核心 + 2 元数据）</div></div>
+<div class="stat"><div class="stat-num">5</div><div class="stat-label">溯源级别</div></div>
+<div class="stat"><div class="stat-num">4</div><div class="stat-label">权限层级</div></div>
+<div class="stat"><div class="stat-num">3</div><div class="stat-label">有效性类型</div></div>
+</div>
+</div>
+</section>
+
+<!-- Syntax -->
+<section id="syntax">
+<div class="container">
+<h2>Factum-F 语法</h2>
+<div class="lead">全括号化 S-expression — 每个合法输入有且仅有一个解析树。</div>
+<div class="anim-container">
+<div class="anim-label">点击播放：从源码到 AST 的解析过程</div>
+<button id="playAnim" style="padding: 8px 20px; border: 0.5px solid var(--border-sec); border-radius: var(--radius-sm); background: var(--bg); cursor: pointer; font-size: 13px; margin-bottom: 12px;">▶ 播放解析动画</button>
+<div id="syntaxAnim" class="anim-node">
+<span class="anim-token" style="background: var(--purple-light); color: var(--purple);">(</span>
+<span class="anim-token" style="background: var(--coral-light); color: var(--coral);">node</span>
+<span class="anim-token" style="background: var(--blue-light); color: var(--blue);">n001</span>
+<span class="anim-token" style="background: var(--amber-light); color: var(--amber);">:pred</span>
+<span class="anim-token" style="background: var(--purple-light); color: var(--purple);">(</span>
+<span class="anim-token" style="background: var(--coral-light); color: var(--coral);">instance-of</span>
+<span class="anim-token" style="background: var(--blue-light); color: var(--blue);">@ACME-CORP</span>
+<span class="anim-token" style="background: var(--teal-light); color: var(--teal);">organization</span>
+<span class="anim-token" style="background: var(--purple-light); color: var(--purple);">)</span>
+<span class="anim-token" style="background: var(--amber-light); color: var(--amber);">:conf</span>
+<span class="anim-token" style="background: #f5e0d0; color: #b35a20;">0.99</span>
+<span class="anim-token" style="background: var(--amber-light); color: var(--amber);">:auth</span>
+<span class="anim-token" style="background: #f5e0d0; color: #b35a20;">0.95</span>
+<span class="anim-token" style="background: var(--amber-light); color: var(--amber);">:perm</span>
+<span class="anim-token" style="background: var(--teal-light); color: var(--teal);">public</span>
+<span class="anim-token" style="background: var(--amber-light); color: var(--amber);">:src</span>
+<span class="anim-token" style="background: var(--purple-light); color: var(--purple);">(</span>
+<span class="anim-token" style="background: var(--coral-light); color: var(--coral);">asserted</span>
+<span class="anim-token" style="background: #e8f5e0; color: #4a7a20;">"wikidata"</span>
+<span class="anim-token" style="background: var(--purple-light); color: var(--purple);">)</span>
+<span class="anim-token" style="background: var(--purple-light); color: var(--purple);">)</span>
+</div>
+</div>
+<div class="card">
+<h3>完整语法示例</h3>
+<div class="code-block"><span class="com">; Acme Corp 知识图谱</span>
+
+<span class="com">; 基础断言 — Acme 是一个组织</span>
+(<span class="sym">node</span> <span class="var">n001</span>
+  <span class="kw">:pred</span> (<span class="sym">instance-of</span> <span class="ent">@ACME-CORP</span> <span class="sym">organization</span>)
+  <span class="kw">:conf</span> <span class="num">0.99</span> <span class="kw">:auth</span> <span class="num">0.95</span> <span class="kw">:perm</span> <span class="sym">public</span>
+  <span class="kw">:src</span> (<span class="sym">asserted</span> <span class="str">"wikidata"</span>))
+
+<span class="com">; LLM 提取 — 大股东信息（必须携带模型引用）</span>
+(<span class="sym">node</span> <span class="var">n004</span>
+  <span class="kw">:pred</span> (<span class="sym">shareholder-major</span> <span class="ent">@ACME-CORP</span> <span class="ent">@FOUNDER-1</span> <span class="num">0.73</span>)
+  <span class="kw">:conf</span> <span class="num">0.85</span> <span class="kw">:auth</span> <span class="num">0.8</span> <span class="kw">:perm</span> <span class="sym">confidential</span>
+  <span class="kw">:src</span> (<span class="sym">extracted</span> <span class="str">"doc002"</span> [<span class="num">100</span> <span class="num">200</span>] (<span class="sym">model</span> <span class="str">"gpt-4"</span> <span class="str">"2024-06"</span>)))
+
+<span class="com">; 派生知识 — 子公司关系（依赖 n001，级联撤回）</span>
+(<span class="sym">node</span> <span class="var">n006</span>
+  <span class="kw">:pred</span> (<span class="sym">subsidiary-of</span> <span class="ent">@ACME-SUB</span> <span class="ent">@ACME-CORP</span>)
+  <span class="kw">:src</span> (<span class="sym">derived</span> <span class="var">n001</span> <span class="str">"rule-subsidiary-merge"</span>)
+  <span class="kw">:deps</span> [<span class="var">n001</span>])</div>
+</div>
+<div class="card">
+<h3>解析唯一性 — 两条保证</h3>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+<div>
+<p style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">1. 全括号化</p>
+<p style="font-size: 12px; color: var(--text-sec);">消除运算符优先级歧义。所有嵌套通过显式括号表达，不存在中缀表达式。</p>
+</div>
+<div>
+<p style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">2. 命名参数顺序约束</p>
+<p style="font-size: 12px; color: var(--text-sec);">命名参数必须在位置参数之后。消除 <span class="text-mono">:keyword</span> 前缀与符号之间的歧义。</p>
+</div>
+</div>
+</div>
+<div class="card">
+<h3>错误分类 — LLM 自我纠正的基础</h3>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin-top: 8px;">
+<div style="font-size: 12px; padding: 8px 12px; background: var(--coral-light); border-radius: 6px;"><strong>MissingPredField</strong> — 缺少 :pred</div>
+<div style="font-size: 12px; padding: 8px 12px; background: var(--coral-light); border-radius: 6px;"><strong>UnknownNodeField</strong> — 未知字段</div>
+<div style="font-size: 12px; padding: 8px 12px; background: var(--amber-light); border-radius: 6px;"><strong>NamedArgBeforePositional</strong> — 参数顺序</div>
+<div style="font-size: 12px; padding: 8px 12px; background: var(--coral-light); border-radius: 6px;"><strong>DepthLimitExceeded</strong> — 超过 128 层</div>
+<div style="font-size: 12px; padding: 8px 12px; background: var(--amber-light); border-radius: 6px;"><strong>UnbalancedParen</strong> — 括号不匹配</div>
+<div style="font-size: 12px; padding: 8px 12px; background: var(--amber-light); border-radius: 6px;"><strong>UnterminatedString</strong> — 字符串未闭合</div>
+<div style="font-size: 12px; padding: 8px 12px; background: var(--coral-light); border-radius: 6px;"><strong>MissingModelRef</strong> — Extracted 缺模型引用</div>
+</div>
+</div>
+</div>
+</section>
+
+<!-- Provenance -->
+<section id="provenance">
+<div class="container">
+<h2>五级溯源体系</h2>
+<div class="lead">每条知识必须声明来源。不同来源承载不同信任含义。</div>
+<div class="prov-list">
+<div class="prov-item" style="border-left-color: var(--teal);">
+<span class="prov-level" style="background: var(--teal-light); color: var(--teal);">Level 1</span>
+<div>
+<div class="prov-name">Verbatim</div>
+<div class="prov-desc">文档原文逐字引用 — 可用 (doc, span) 精确重建原文</div>
+</div>
+<span class="prov-trust">最高信任</span>
+</div>
+<div class="prov-item" style="border-left-color: #5DCAA5;">
+<span class="prov-level" style="background: #E1F5EE; color: #0F6E56;">Level 2</span>
+<div>
+<div class="prov-name">Summary</div>
+<div class="prov-desc">人工撰写的摘要 — 人类判断</div>
+</div>
+<span class="prov-trust">高信任</span>
+</div>
+<div class="prov-item" style="border-left-color: var(--amber);">
+<span class="prov-level" style="background: var(--amber-light); color: var(--amber);">Level 3</span>
+<div>
+<div class="prov-name">Extracted <span style="font-size: 11px; color: var(--coral);">(必须携带模型引用)</span></div>
+<div class="prov-desc">LLM 提取的知识 — 可能幻觉。强制携带 model + version</div>
+</div>
+<span class="prov-trust">中信任</span>
+</div>
+<div class="prov-item" style="border-left-color: var(--blue);">
+<span class="prov-level" style="background: var(--blue-light); color: var(--blue);">Level 4</span>
+<div>
+<div class="prov-name">Derived</div>
+<div class="prov-desc">从其他节点形式化推导 — 依赖规则正确性</div>
+</div>
+<span class="prov-trust">取决于规则</span>
+</div>
+<div class="prov-item" style="border-left-color: var(--text-ter);">
+<span class="prov-level" style="background: var(--bg-ter); color: var(--text-sec);">Level 5</span>
+<div>
+<div class="prov-name">Asserted</div>
+<div class="prov-desc">人类或外部系统直接断言 — 取决于断言者</div>
+</div>
+<span class="prov-trust">取决于断言者</span>
+</div>
+</div>
+<div class="card mt-16" style="border-left: 3px solid var(--coral);">
+<h3 style="color: var(--coral);">MissingModelRef — 不可协商的约束</h3>
+<p style="font-size: 13px;">Extracted 溯源<strong>必须</strong>携带模型引用（name + version）。这在<strong>解析器中强制执行</strong>，不是文档约定。同一段文本被 GPT-4 和小模型提取的可靠性截然不同——没有模型引用的提取知识是审计链的断裂。</p>
+</div>
+</div>
+</section>
+
+<!-- Conflict -->
+<section id="conflict">
+<div class="container">
+<h2>冲突仲裁 — 拒绝猜测</h2>
+<div class="lead">当多个节点匹配同一查询时，不确定就返回 Ambiguous，绝不猜。</div>
+<div class="policy-grid">
+<div class="policy-card" style="border-top: 3px solid var(--teal);">
+<div class="policy-name">LatestWins</div>
+<div class="policy-desc">最高权威度获胜，时间戳决胜</div>
+<div class="policy-result" style="background: var(--teal-light); color: var(--teal);">默认策略</div>
+</div>
+<div class="policy-card" style="border-top: 3px solid var(--blue);">
+<div class="policy-name">HighestAuthority</div>
+<div class="policy-desc">严格按权威度排序</div>
+<div class="policy-result" style="background: var(--amber-light); color: var(--amber);">多个最高 → Ambiguous</div>
+</div>
+<div class="policy-card" style="border-top: 3px solid var(--purple);">
+<div class="policy-name">Unanimous</div>
+<div class="policy-desc">仅当所有来源一致时返回</div>
+<div class="policy-result" style="background: var(--coral-light); color: var(--coral);">不一致 → Ambiguous</div>
+</div>
+</div>
+<div class="card mt-16">
+<h3>查询引擎 6 步流水线</h3>
+<div class="stepper" id="queryStepper">
+<div class="stepper-nav">
+<button class="active" data-step="0">1. 候选生成</button>
+<button data-step="1">2. 权限过滤</button>
+<button data-step="2">3. 有效性过滤</button>
+<button data-step="3">4. 置信度过滤</button>
+<button data-step="4">5. 模式匹配</button>
+<button data-step="5">6. 冲突仲裁</button>
+</div>
+<div class="stepper-content" id="stepperContent">
+<div class="step-title">候选生成</div>
+<div class="step-desc">通过实体索引或谓词头索引获取候选节点，避免全表扫描</div>
+<div class="code-block"><span class="com">; 查询：ACME-CORP 的大股东是谁？</span>
+(<span class="sym">shareholder-major</span> <span class="ent">@ACME-CORP</span> <span class="var">?holder</span> <span class="var">?stake</span>)
+<span class="com">; → 使用 by_entity["ACME-CORP"] 索引</span></div>
+</div>
+<div class="stepper-dots">
+<div class="dot active"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<!-- Permission -->
+<section id="permission">
+<div class="container">
+<h2>索引级权限过滤</h2>
+<div class="lead">权限过滤在候选生成阶段进行 — 无权访问的节点永远不会被物化。</div>
+<div class="card" style="border-left: 3px solid var(--coral);">
+<h3 style="color: var(--coral);">为什么后查询过滤是漏洞？</h3>
+<p style="font-size: 13px;">如果系统先检索所有匹配再过滤，聚合查询本身就泄露信息："返回 10 条但过滤掉 3 条" → 调用者知道存在 3 条机密节点。</p>
+</div>
+<div class="card mt-16">
+<h3>权限层级（位掩码）</h3>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-top: 12px;">
+<div style="padding: 12px; background: var(--teal-light); border-radius: 6px; border-left: 3px solid var(--teal);">
+<div style="font-weight: 600; font-size: 13px;">PUBLIC <span style="font-family: var(--mono); font-size: 11px; color: var(--text-sec);">0b0001</span></div>
+<div style="font-size: 12px; color: var(--text-sec);">匿名用户可访问</div>
+</div>
+<div style="padding: 12px; background: var(--blue-light); border-radius: 6px; border-left: 3px solid var(--blue);">
+<div style="font-weight: 600; font-size: 13px;">INTERNAL <span style="font-family: var(--mono); font-size: 11px; color: var(--text-sec);">0b0010</span></div>
+<div style="font-size: 12px; color: var(--text-sec);">内部员工可访问</div>
+</div>
+<div style="padding: 12px; background: var(--amber-light); border-radius: 6px; border-left: 3px solid var(--amber);">
+<div style="font-weight: 600; font-size: 13px;">CONFIDENTIAL <span style="font-family: var(--mono); font-size: 11px; color: var(--text-sec);">0b0100</span></div>
+<div style="font-size: 12px; color: var(--text-sec);">分析师可访问</div>
+</div>
+<div style="padding: 12px; background: var(--coral-light); border-radius: 6px; border-left: 3px solid var(--coral);">
+<div style="font-weight: 600; font-size: 13px;">RESTRICTED <span style="font-family: var(--mono); font-size: 11px; color: var(--text-sec);">0b1000</span></div>
+<div style="font-size: 12px; color: var(--text-sec);">仅管理员</div>
+</div>
+</div>
+</div>
+<div class="card mt-16">
+<h3>级联撤回</h3>
+<p style="font-size: 13px; color: var(--text-sec); margin-bottom: 12px;">源节点撤回时，所有 Derived 依赖节点自动级联撤回。软删除保留审计历史。</p>
+<div style="display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; flex-wrap: wrap;">
+<span style="padding: 6px 12px; background: var(--coral-light); border-radius: 6px; color: var(--coral); text-decoration: line-through;">n001 (asserted)</span>
+<span style="color: var(--text-ter);">→ cascade →</span>
+<span style="padding: 6px 12px; background: var(--amber-light); border-radius: 6px; color: var(--amber); text-decoration: line-through;">n006 (derived from n001)</span>
+<span style="color: var(--text-ter);">→ cascade →</span>
+<span style="padding: 6px 12px; background: var(--amber-light); border-radius: 6px; color: var(--amber); text-decoration: line-through;">n007 (derived from n006)</span>
+</div>
+</div>
+</div>
+</section>
+
+<!-- Token Efficiency -->
+<section id="token">
+<div class="container">
+<h2>Token 效率 — LLM 原生指标</h2>
+<div class="lead">规范 S-expression 比 JSON 省 66% token。这违反直觉——为正确性设计的形式恰好最省 token。</div>
+<div class="chart-wrapper">
+<canvas id="tokenChart" role="img" aria-label="Token efficiency comparison chart">Token efficiency comparison: Factum canonical vs compact vs JSON</canvas>
+</div>
+<div class="card mt-16">
+<h3>为什么规范形式比紧凑形式更省 token？</h3>
+<p style="font-size: 13px; margin-bottom: 12px;">BPE 分词器将 JSON 分隔符（<span class="text-mono">{ } " :</span>）拆分为独立 token，而 S-expression 的括号和空格经常与相邻 token 合并。</p>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+<div style="padding: 12px; background: var(--bg-sec); border-radius: 6px;">
+<div style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">JSON token 序列</div>
+<div class="text-mono text-sm" style="color: var(--text-sec);">{ | " | confidence | " | : | 0.85 | , | " | authority | " | : | 0.8 | }</div>
+<div style="font-size: 12px; color: var(--coral); margin-top: 4px;">每个分隔符 = 1 token</div>
+</div>
+<div style="padding: 12px; background: var(--bg-sec); border-radius: 6px;">
+<div style="font-weight: 600; font-size: 13px; margin-bottom: 4px;">S-expr token 序列</div>
+<div class="text-mono text-sm" style="color: var(--text-sec);">(node | n001 | :pred | (instance-of | @ACME-CORP | organization) | :conf | 0.85)</div>
+<div style="font-size: 12px; color: var(--teal); margin-top: 4px;">括号常与相邻词合并</div>
+</div>
+</div>
+</div>
+<div class="stats mt-16">
+<div class="stat"><div class="stat-num" style="color: var(--teal);">-66%</div><div class="stat-label">规范形式 token 减少（vs JSON）</div></div>
+<div class="stat"><div class="stat-num" style="color: var(--amber);">-12%</div><div class="stat-label">紧凑形式 token 减少</div></div>
+<div class="stat"><div class="stat-num">-76%</div><div class="stat-label">紧凑形式字节减少</div></div>
+<div class="stat"><div class="stat-num">100%</div><div class="stat-label">语法往返一致性</div></div>
+</div>
+<p style="font-size: 11px; color: var(--text-ter); margin-top: 8px;">⚠️ token 数据为启发式估算（±15%），真实分词器测量追踪于 issue #9</p>
+</div>
+</section>
+
+<!-- MCP -->
+<section id="mcp">
+<div class="container">
+<h2>MCP 集成</h2>
+<div class="lead">通过 Model Context Protocol 与 LLM 客户端通信，JSON-RPC 2.0，兼容 MCP 2025-06-18。</div>
+<div class="mcp-flow">
+<div class="mcp-layer">
+<div class="layer-icon" style="background: var(--purple-light); color: var(--purple);">LLM</div>
+<div class="layer-content">
+<div class="layer-name">LLM 客户端（Claude Code / Cursor）</div>
+<div class="layer-desc">通过 MCP 调用 factum_query / factum_insert / factum_retract</div>
+</div>
+</div>
+<div class="mcp-arrow">↕ JSON-RPC 2.0</div>
+<div class="mcp-layer">
+<div class="layer-icon" style="background: var(--blue-light); color: var(--blue);">MCP</div>
+<div class="layer-content">
+<div class="layer-name">factum-mcp（协议层 + 处理器）</div>
+<div class="layer-desc">词素表协商 · capabilities.factum 能力声明 · 优雅降级</div>
+</div>
+</div>
+<div class="mcp-arrow">↕ Rust API</div>
+<div class="mcp-layer">
+<div class="layer-icon" style="background: var(--teal-light); color: var(--teal);">RT</div>
+<div class="layer-content">
+<div class="layer-name">factum-rt（运行时）</div>
+<div class="layer-desc">存储 · 6 个索引 · 查询引擎 · 仲裁 · 权限 · 级联撤回 · 验证器</div>
+</div>
+</div>
+<div class="mcp-arrow">↕</div>
+<div class="mcp-layer">
+<div class="layer-icon" style="background: var(--amber-light); color: var(--amber);">F</div>
+<div class="layer-content">
+<div class="layer-name">factum-core（核心）</div>
+<div class="layer-desc">Node 七元组 · S-expression 词法器/解析器 · 双序列化 · 24 词素</div>
+</div>
+</div>
+</div>
+<div class="card mt-16">
+<h3>三个 MCP 工具</h3>
+<div class="compare-table">
+<table>
+<thead><tr><th>工具</th><th>功能</th><th>必需参数</th></tr></thead>
+<tbody>
+<tr><td class="text-mono">factum_query</td><td>查询知识图谱</td><td class="text-mono">query (S-expr)</td></tr>
+<tr><td class="text-mono">factum_insert</td><td>插入新节点</td><td class="text-mono">node (S-expr)</td></tr>
+<tr><td class="text-mono">factum_retract</td><td>撤回节点（级联）</td><td class="text-mono">node_id</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+<div class="card">
+<h3>词素表协商</h3>
+<p style="font-size: 13px; color: var(--text-sec); margin-bottom: 12px;">客户端声明 <span class="text-mono">capabilities.factum</span> → 服务器返回 24 个词素的 ID/名称/种类表 → 紧凑形式使用 u32 索引替代字符串名称。未声明的客户端自动降级为字符串名称。</p>
+<div class="code-block">{
+  <span class="str">"method"</span>: <span class="str">"initialize"</span>,
+  <span class="str">"params"</span>: {
+    <span class="str">"capabilities"</span>: {
+      <span class="str">"factum"</span>: {}
+    }
+  }
+}
+<span class="com">// → Server returns factum_morphemes table</span></div>
+</div>
+</div>
+</section>
+
+<!-- Compare -->
+<section id="compare">
+<div class="container">
+<h2>与其他格式的关系</h2>
+<div class="lead">Factum 不替代任何现有格式——它占据特定生态位。</div>
+<div class="compare-table">
+<table>
+<thead><tr><th>格式</th><th>定位</th><th>Factum 的差异</th></tr></thead>
+<tbody>
+<tr><td><strong>RDF / JSON-LD</strong></td><td>W3C 三元组</td><td>七元组，溯源/置信度/权限为一等公民。RDF 需要 reification。</td></tr>
+<tr><td><strong>CUE</strong></td><td>配置验证</td><td>不同领域。Factum 验证知识声明，带时间有效性和冲突仲裁。</td></tr>
+<tr><td><strong>Datalog</strong></td><td>演绎查询</td><td>Factum 支持模式匹配但增加时间有效性、置信度仲裁和溯源。</td></tr>
+<tr><td><strong>Markdown</strong></td><td>人类可读文本</td><td>面向人类 vs 面向 LLM。Factum 以可读性换可验证性。</td></tr>
+<tr><td><strong>JSON</strong></td><td>通用数据交换</td><td>JSON 无 schema/溯源/有效性。Factum 紧凑形式以 JSON 为传输编码。</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+</section>
+
+<!-- Roadmap -->
+<section id="roadmap">
+<div class="container">
+<h2>路线图</h2>
+<div class="lead">M1 开源 Alpha 进行中，M2 推广就绪为硬性阻塞项。</div>
+<div class="roadmap-timeline">
+<div class="milestone done">
+<span class="ms-title">M0: 核心实现</span><span class="ms-status" style="background: var(--teal-light); color: var(--teal);">完成</span>
+<div class="ms-items">factum-core / factum-rt / factum-mcp / factum-bench 全部实现，90 测试通过</div>
+</div>
+<div class="milestone progress">
+<span class="ms-title">M1: 开源 Alpha</span><span class="ms-status" style="background: var(--amber-light); color: var(--amber);">进行中</span>
+<div class="ms-items">README / CI / 一致性向量 / 编写指南 / Good first issues — 退出标准：fuzzing 稳定 1 周 + 3 外部审查者</div>
+</div>
+<div class="milestone planned">
+<span class="ms-title">M2: 推广就绪</span><span class="ms-status" style="background: var(--bg-ter); color: var(--text-sec);">规划中</span>
+<div class="ms-items">RocksDB 后端 · stdio/HTTP 传输验证 · Claude Code/Cursor 集成 · Wikidata 转换器 · 200+ 词素 · Z3/Lean 验证器 · 真实 tokenizer</div>
+</div>
+<div class="milestone planned">
+<span class="ms-title">M3+: 研究</span><span class="ms-status" style="background: var(--purple-light); color: var(--purple);">研究</span>
+<div class="ms-items">factum-l 潜空间投影 · 编码器/解码器 · 语义往返 ≥ 0.95 · Qwen2.5-7B + LoRA</div>
+</div>
+</div>
+<div class="stats mt-24">
+<div class="stat"><div class="stat-num">24</div><div class="stat-label">种子词素</div></div>
+<div class="stat"><div class="stat-num">6</div><div class="stat-label">存储索引</div></div>
+<div class="stat"><div class="stat-num">3</div><div class="stat-label">MCP 工具</div></div>
+<div class="stat"><div class="stat-num">7</div><div class="stat-label">错误分类</div></div>
+</div>
+</div>
+</section>
+
+<footer>
+<div class="container">
+<p>Factum Project · MIT License · <a href="https://github.com/factum-project/factum" style="color: var(--blue);">GitHub</a> · DCO Sign-off</p>
+<p style="margin-top: 4px;">v0.1.0-alpha.1 — Working draft, seeking early collaborators</p>
+</div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+// Nav active state
+const navLinks = document.querySelectorAll('#nav a');
+const sections = document.querySelectorAll('section');
+window.addEventListener('scroll', () => {
+  let current = '';
+  sections.forEach(s => {
+    if (window.scrollY >= s.offsetTop - 80) current = s.id;
+  });
+  navLinks.forEach(a => {
+    a.classList.toggle('active', a.getAttribute('href') === '#' + current);
+  });
+});
+
+// Tuple expand
+document.querySelectorAll('.tuple-cell').forEach(cell => {
+  cell.addEventListener('click', () => cell.classList.toggle('expanded'));
+});
+
+// Syntax animation
+const playBtn = document.getElementById('playAnim');
+const tokens = document.querySelectorAll('#syntaxAnim .anim-token');
+let animTimer = null;
+playBtn.addEventListener('click', () => {
+  tokens.forEach(t => t.classList.remove('visible'));
+  clearTimeout(animTimer);
+  let i = 0;
+  function showNext() {
+    if (i < tokens.length) {
+      tokens[i].classList.add('visible');
+      animTimer = setTimeout(showNext, 120);
+      i++;
+    }
+  }
+  showNext();
+});
+
+// Query stepper
+const stepperData = [
+  { title: '候选生成', desc: '通过实体索引或谓词头索引获取候选节点，避免全表扫描', code: '<span class="com">; 查询：ACME-CORP 的大股东是谁？</span>\n(<span class="sym">shareholder-major</span> <span class="ent">@ACME-CORP</span> <span class="var">?holder</span> <span class="var">?stake</span>)\n<span class="com">; → 使用 by_entity["ACME-CORP"] 索引</span>' },
+  { title: '权限过滤', desc: '在索引层过滤 — 查询者无权访问的节点不会被物化，防止聚合泄露', code: '<span class="com">; by_perm 索引：role_mask &amp; node.permissions</span>\n<span class="com">; PUBLIC 用户看不到 CONFIDENTIAL 节点</span>\n<span class="com">; 候选 6 → 过滤后 4（2 个 confidential 被排除）</span>' },
+  { title: '有效性过滤', desc: '检查节点在查询时间点是否有效', code: '<span class="com">; validity.is_valid_at(now)</span>\n<span class="com">; Forever → 通过</span>\n<span class="com">; Window { from, until } → from ≤ now &lt; until</span>\n<span class="com">; 过期的节点被排除</span>' },
+  { title: '置信度过滤', desc: '低于 min_confidence 阈值的节点被过滤', code: '<span class="com">; min_conf = 0.5</span>\n<span class="com">; conf=0.3 → 排除</span>\n<span class="com">; conf=0.85 → 通过</span>' },
+  { title: '模式匹配', desc: '将查询模式与候选谓词匹配，提取变量绑定', code: '<span class="com">; Pattern: (shareholder-major @ACME-CORP ?holder ?stake)</span>\n<span class="com">; Match:  (shareholder-major @ACME-CORP @FOUNDER-1 0.73)</span>\n<span class="com">; Bindings: { holder → @FOUNDER-1, stake → 0.73 }</span>' },
+  { title: '冲突仲裁', desc: '按策略解决匹配同一绑定的多个节点，无法解决时返回 Ambiguous', code: '<span class="com">; LatestWins → 最高 authority 获胜</span>\n<span class="com">; Unanimous → 全部一致才返回</span>\n<span class="com">; Ambiguous → 拒绝猜测，返回所有候选</span>' }
+];
+const stepperBtns = document.querySelectorAll('#queryStepper .stepper-nav button');
+const stepperContent = document.getElementById('stepperContent');
+const stepperDots = document.querySelectorAll('#queryStepper .stepper-dots .dot');
+let currentStep = 0;
+function showStep(i) {
+  currentStep = i;
+  stepperBtns.forEach((b, j) => b.classList.toggle('active', j === i));
+  stepperDots.forEach((d, j) => d.classList.toggle('active', j === i));
+  const s = stepperData[i];
+  stepperContent.innerHTML = '<div class="step-title">' + s.title + '</div><div class="step-desc">' + s.desc + '</div><div class="code-block">' + s.code + '</div>';
+}
+stepperBtns.forEach((b, i) => b.addEventListener('click', () => showStep(i)));
+// Auto-advance
+setInterval(() => {
+  showStep((currentStep + 1) % stepperData.length);
+}, 4000);
+
+// Token chart
+const ctx = document.getElementById('tokenChart');
+if (ctx) {
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['JSON (pretty)', 'Factum compact', 'Factum canonical', 'Markdown'],
+      datasets: [
+        {
+          label: '估算 token 数',
+          data: [399, 350, 134, 120],
+          backgroundColor: ['#D85A30', '#BA7517', '#0F6E56', '#888780'],
+          borderRadius: 6,
+          barPercentage: 0.6
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            afterLabel: function(ctx) {
+              const reductions = [0, -12, -66, -70];
+              const r = reductions[ctx.dataIndex];
+              return r === 0 ? '基线' : 'vs JSON: ' + r + '%';
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          title: { display: true, text: '估算 token 数（5 节点）', font: { size: 12 } },
+          grid: { color: 'rgba(0,0,0,0.06)' }
+        },
+        x: {
+          grid: { display: false },
+          ticks: { font: { size: 12 } }
+        }
+      }
+    }
+  });
+}
+</script>
+</body>
+</html>

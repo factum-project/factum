@@ -251,20 +251,21 @@ Compact-form conformance vectors will be added to `spec/conformance/` as
 - CompactValidity Forever vs Window vs open-ended
 - All 5 provenance types
 
-## 8. Form-Positioning Decision (Pending — Triggered by Issue #9)
+## 8. Form-Positioning Decision (Confirmed — Issue #9 Resolved)
 
-**Status**: Decision pending. Heuristic token estimates suggest a repositioning
-may be needed, but real tokenizer measurement (issue #9) is required before
-making the spec-level change.
+**Status**: Confirmed. Real tokenizer measurement (o200k_base via tiktoken-rs)
+confirms the canonical form is more token-efficient than compact for LLM context.
 
 ### The Finding
 
-Heuristic token estimation (±15% of real o200k_base) revealed:
+Real o200k_base (GPT-4o) tokenizer measurement:
 
-| Form | Bytes (5 nodes) | Est. tokens | Token reduction vs JSON |
+| Form | Bytes (5 nodes) | Real tokens | Token reduction vs JSON |
 |------|-----------------|-------------|-------------------------|
-| Compact JSON | ~350 | ~350 | −12% |
-| Canonical S-expr | 649 | ~134 | −66% |
+| Compact JSON | 643 | 290 | −53% |
+| Canonical S-expr | 650 | 238 | **−62%** |
+| Verbose JSON (baseline) | 1994 | 623 | — |
+| Markdown (no metadata) | 420 | 181 | −71% |
 
 The canonical form — designed for hashing and round-trip correctness — is
 more token-efficient than the compact form, which was designed for transport
@@ -272,9 +273,7 @@ economy. This is because BPE tokenizers split JSON delimiters (`{`, `}`, `"`,
 `:`) into individual tokens, while S-expression parentheses and whitespace are
 frequently merged with adjacent tokens.
 
-### Proposed Decision (Post-Issue-#9)
-
-If real tokenizer measurement confirms the token gap:
+### Decision
 
 1. **Rewrite compact form positioning**: from "LLM transport format" to
    "storage / service-to-service format" (byte-optimal, not token-optimal).
@@ -295,7 +294,6 @@ If real tokenizer measurement confirms the token gap:
    JSON). When absent or `"compact"`, the server returns compact JSON (current
    behavior).
 
-This is the first revision to the compact-form spec (v0.1-draft → v0.1-draft.1
-if the decision is made). The revision will be documented in the changelog
-and flagged as a breaking semantic change (return format negotiation, not
-wire format change).
+This is the first revision to the compact-form spec (v0.1-draft → v0.1-draft.1).
+The revision is flagged as a breaking semantic change (return format negotiation,
+not wire format change).

@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **MCP stdio transport**: `factum-mcp-server` binary reads newline-delimited JSON-RPC from stdin, writes responses to stdout. Verified end-to-end: initialize → insert → query flow works with real stdin/stdout.
+- **Real tokenizer measurement** (issue #9 ✅): `tiktoken-rs` (o200k_base / GPT-4o) replaces heuristic estimator. Real token counts: canonical 238 tokens (−62% vs JSON), compact 290 tokens (−53% vs JSON), verbose JSON 623 tokens. Heuristic estimator retained as fallback, marked with 20.7% / 43.7% estimation error.
+- **Getting Started guide** (`docs/getting-started-mcp.md`): step-by-step MCP server setup, Claude Code / Cursor configuration, example insert + query flows, troubleshooting.
+- **Interactive visualization page** (`docs/site/index.html`): GitHub Pages-ready HTML with animated syntax parsing, interactive 7-tuple explorer, 6-step query pipeline stepper, token efficiency chart, MCP architecture diagram, and roadmap timeline.
+- **Chinese technical white paper** (`docs/whitepaper-zh.md`): 20 sections + 4 appendices covering the complete Factum architecture.
+
+### Changed
+- **Token efficiency table updated with real o200k_base measurements**: compact −53% tokens (was −12% estimated), canonical −62% tokens (was −66% estimated). Key finding confirmed: canonical form is more token-efficient than compact form.
+- **Form-positioning decision confirmed** (spec/compact-form.md §8): Real tokenizer data confirms canonical beats compact on tokens. `capabilities.factum.preferred_form` negotiation should serve canonical to LLM clients, reposition compact as storage/service-to-service format.
+- **Byte efficiency table updated**: compact 643 bytes (−68%), canonical 650 bytes (−67%), JSON 1994 bytes (baseline), Markdown 420 bytes (−79%). Previous numbers used a smaller JSON baseline.
+- **ROADMAP M2**: issue #9 marked ✅, form-positioning decision updated from "pending" to "confirmed".
+
 ### Renamed
 - **Renamed from AXON to Factum** for namespace clarity. All crate names, module names, types, URLs, and documentation updated. The language specification name changed from AXON-F to Factum-F. No functional changes.
 
@@ -67,7 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0-alpha] — 2026-09-08
 
 ### Added
-- **factum-core**: Node 7-tuple data model (id, predicate, validity, provenance, confidence, authority, permissions, deps)
+- **factum-core**: Node 7-tuple data model (id, predicate, validity, provenance, confidence, authority, permissions) + deps + status
 - **factum-core**: S-expression lexer with full token types (symbols, variables, keywords, strings, numbers, dates, durations, booleans, URIs, entity references)
 - **factum-core**: Hand-written recursive-descent parser with full parenthesization for parse uniqueness
 - **factum-core**: Canonical serialization (fixed field order, minimal Dec representation) + compact serialization (JSON with morpheme index + numeric tags)

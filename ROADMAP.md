@@ -39,7 +39,7 @@ This roadmap tracks what's planned, in priority order. Items before the M2 line 
 - ✅ GitHub org URL unified (`factum-project/factum`)
 - ✅ Version: `0.1.0-alpha.1` (semver pre-release format)
 - ✅ Benchmark numbers unified (pretty-JSON baseline)
-- ✅ Token efficiency table (heuristic estimate, ±15%; real measurement → issue #9)
+- ✅ Token efficiency table (real o200k_base measurement via tiktoken-rs; issue #9 resolved)
 - ✅ LLM authoring guide (`docs/authoring-for-llms.md`)
 - ✅ Good first issues (9 pre-labeled, `docs/GOOD_FIRST_ISSUES.md`)
 - ✅ Issue/PR templates (bug report, feature proposal, morpheme proposal, PR template)
@@ -81,8 +81,8 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 - 📋 OSS-Fuzz integration (optional)
 
 ### Benchmarks
-- 📋 **P0**: Replace heuristic token estimator with real tokenizer (issue #9) — triggers form-positioning decision
-- 📋 **Form-positioning decision**: After issue #9 real tokenizer data, decide whether `factum_query` should negotiate return form via `capabilities.factum.preferred_form`. Heuristic estimate suggests canonical (−66% tokens) beats compact (−12% tokens) for LLM context — if confirmed, rewrite compact form positioning from "LLM transport format" to "storage/service-to-service format" and serve canonical to LLM clients.
+- ✅ **P0**: Replace heuristic token estimator with real tokenizer (issue #9 ✅) — **confirmed**: canonical −62% tokens, compact −53% tokens
+- 📋 **Form-positioning decision**: Real tokenizer data confirms canonical (−62% tokens) beats compact (−53% tokens) for LLM context. Implement `capabilities.factum.preferred_form` negotiation: serve canonical to LLM clients, reposition compact as storage/service-to-service format.
 - 📋 Compact form vs Markdown/JSON efficiency data (published)
 - 📋 Factum-loses dimensions explicitly shown (esp. vs Markdown — Markdown likely wins on tokens due to zero metadata)
 - 📋 Grounded QA benchmark (multi-hop fact QA with verifiable citations)
