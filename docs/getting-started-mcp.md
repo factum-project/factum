@@ -1,14 +1,12 @@
 # Getting Started with Factum MCP
 
-This guide walks you through running the Factum MCP server and using it with
-LLM clients. The server uses stdio transport (JSON-RPC over stdin/stdout).
+Run Factum as a local MCP server and use it from Claude Code or Cursor.
+The client starts `factum-mcp-server` as a subprocess and exchanges
+newline-delimited JSON-RPC over stdin/stdout. No HTTP service is needed.
 
-## Prerequisites
+## Prerequisites and build
 
-- Rust 1.75+ (install via [rustup](https://rustup.rs))
-- Git
-
-## Step 1: Build the server
+Install a current stable Rust toolchain and Git, then build the server:
 
 ```bash
 git clone https://github.com/factum-project/factum.git
@@ -16,175 +14,151 @@ cd factum
 cargo build --release -p factum-mcp --bin factum-mcp-server
 ```
 
-The binary will be at `target/release/factum-mcp-server`.
+The executable is `target/release/factum-mcp-server` (with `.exe` on Windows).
+Client configurations must point to the executable on your own machine.
 
-For development, use `cargo run` directly:
+## Configure Claude Code
 
-```bash
-cargo run -p factum-mcp --bin factum-mcp-server
-```
-
-## Step 2: Verify it works
-
-Pipe a JSON-RPC initialize request and check the response:
+From your Factum checkout, register the executable for this local project:
 
 ```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"factum":{}}}}' \
-  | cargo run -p factum-mcp --bin factum-mcp-server 2>/dev/null
+claude mcp add --transport stdio --scope local factum -- "$(pwd)/target/release/factum-mcp-server"
+claude mcp get factum
 ```
 
-You should see a response with `protocolVersion`, `serverInfo`, and a
-`factum_morphemes` array listing all 24 seed morphemes.
+Start a new Claude Code session in the same directory and run `/mcp` to check
+that `factum` is connected. The available tools are:
 
-## Step 3: Insert knowledge and query
+- `factum_insert`: insert a knowledge node.
+- `factum_query`: query matching nodes.
+- `factum_retract`: retract a node and its derived dependents.
 
-The server reads newline-delimited JSON from stdin. Each line is one
-JSON-RPC request. Here's a complete insert + query flow:
+To try the server without registering it permanently, save the following as
+`factum.mcp.json`, replacing the executable path:
+
+```json
+{
+  "mcpServers": {
+    "factum": {
+      "command": "/absolute/path/to/factum/target/release/factum-mcp-server",
+      "args": []
+    }
+  }
+}
+```
+
+Then launch a session with only this MCP configuration:
 
 ```bash
-cat <<'EOF' | cargo run -p factum-mcp --bin factum-mcp-server 2>/dev/null
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"factum":{}}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"factum_insert","arguments":{"node":"(node n001 :pred (instance-of @ACME-CORP organization) :conf 0.99 :auth 0.95 :perm public :src (asserted wikidata))"}}}
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"factum_query","arguments":{"query":"(instance-of ?x organization)"}}}
-EOF
+claude --mcp-config ./factum.mcp.json --strict-mcp-config
 ```
 
-Expected output (abbreviated):
-```
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18",...}}
-{"jsonrpc":"2.0","id":2,"result":{"content":[{"text":"Node inserted successfully","type":"text"}]}}
-{"jsonrpc":"2.0","id":3,"result":{"content":[{"json":{"count":1,"nodes":["..."]}}]}}
-```
+To remove a locally registered server, use `claude mcp remove --scope local factum`.
 
-## Step 4: List available tools
+## Try a complete workflow
+
+Ask Claude Code to perform these operations in order, using the actual tools:
+
+> Insert this test node:
+> `(node example001 :pred (located-in @QINGXI-FACTORY @SONGLAN-CITY) :valid forever :src (asserted "manual-test") :conf 0.95 :auth 0.8 :perm public :deps [])`.
+> Query `(located-in @QINGXI-FACTORY ?city)` and report the returned location.
+> Read the MCP resource `factum://nodes/example001` and check the same relation.
+> Retract `example001`, then repeat the query to confirm there are no results.
+
+Expected observations:
+
+| Operation | Result |
+|---|---|
+| Insert | `Node inserted successfully` |
+| Query | `count: 1`, with `@SONGLAN-CITY` in the canonical node |
+| Read resource | `contents` contains the URI, `mimeType: text/plain`, and node text |
+| Retract | `retracted: ["example001"]`, `count: 1` |
+| Query again | `count: 0`, `nodes: []` |
+
+The store is **in memory**. Keep this workflow in one client session; starting
+a new server process creates an empty store. Different clients do not share
+nodes. A retracted node is retained internally for auditing but is absent from
+normal queries, resource listings, and resource reads. To repeat an insertion
+within one server process, use a fresh node ID.
+
+## Configure Cursor
+
+In the target project's `.cursor/mcp.json`, add the same `mcpServers` object
+shown above, with your executable's absolute path. Enable the server in Cursor's
+MCP settings and use the same workflow.
+
+## Verify directly over stdin/stdout
+
+This uses the same executable and a complete initialization sequence. Each JSON
+object must occupy one line. An initialization notification has no request ID
+and receives no response.
 
 ```bash
-cat <<'EOF' | cargo run -p factum-mcp --bin factum-mcp-server 2>/dev/null
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+cat <<'EOF' | ./target/release/factum-mcp-server
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"manual-check","version":"1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
 {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"factum_insert","arguments":{"node":"(node example001 :pred (located-in @QINGXI-FACTORY @SONGLAN-CITY) :valid forever :src (asserted \"manual-test\") :conf 0.95 :auth 0.8 :perm public :deps [])"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"factum_query","arguments":{"query":"(located-in @QINGXI-FACTORY ?city)"}}}
+{"jsonrpc":"2.0","id":5,"method":"resources/list","params":{}}
+{"jsonrpc":"2.0","id":6,"method":"resources/read","params":{"uri":"factum://nodes/example001"}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"factum_retract","arguments":{"node_id":"example001"}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"factum_query","arguments":{"query":"(located-in @QINGXI-FACTORY ?city)"}}}
 EOF
 ```
 
-This returns three tools:
-- `factum_query` — query the knowledge graph
-- `factum_insert` — insert a new node
-- `factum_retract` — retract a node (cascade)
-
-## Step 5: Configure in Claude Code
-
-Add the Factum MCP server to your Claude Code configuration:
+There should be eight response lines, with IDs 1 through 8. The final query
+returns zero nodes. Query/retraction responses provide standard text content
+and the same JSON object in `structuredContent`. For example, response 8 is:
 
 ```json
 {
-  "mcpServers": {
-    "factum": {
-      "command": "/path/to/factum/target/release/factum-mcp-server",
-      "args": []
-    }
+  "jsonrpc": "2.0",
+  "id": 8,
+  "result": {
+    "content": [{"type": "text", "text": "{\"ambiguous\":false,\"count\":0,\"form\":\"canonical\",\"nodes\":[]}"}],
+    "structuredContent": {"ambiguous": false, "count": 0, "form": "canonical", "nodes": []},
+    "isError": false
   }
 }
 ```
 
-After adding, restart Claude Code. You should see `factum_query`,
-`factum_insert`, and `factum_retract` as available tools.
+`resources/templates/list` exposes `factum://nodes/{id}`. Listings and reads
+use the same public permission context as queries. Resource subscriptions and
+change notifications are not implemented by the stdio bridge and are not
+advertised as supported.
 
-## Step 6: Configure in Cursor
+## Output formats
 
-Add to your Cursor MCP settings (Settings > MCP Servers):
+Ordinary MCP clients receive canonical Factum text with readable entity and
+relation names. They need no custom vocabulary negotiation.
 
-```json
-{
-  "mcpServers": {
-    "factum": {
-      "command": "/path/to/factum/target/release/factum-mcp-server",
-      "args": []
-    }
-  }
-}
-```
-
-## Example queries
-
-### Insert a knowledge graph
-
-```
-factum_insert: (node n001 :pred (instance-of @ACME-CORP organization) :conf 0.99 :auth 0.95 :perm public :src (asserted wikidata))
-
-factum_insert: (node n002 :pred (located-in @ACME-CORP @SHENZHEN) :conf 0.95 :auth 0.9 :perm public :src (asserted wikidata))
-
-factum_insert: (node n003 :pred (founded-on @ACME-CORP #date(2001-03-15)) :conf 0.99 :auth 1.0 :perm public :src (verbatim doc001 [0 50]))
-
-factum_insert: (node n004 :pred (shareholder-major @ACME-CORP @FOUNDER-1 0.73) :conf 0.85 :auth 0.8 :perm confidential :src (extracted doc002 [100 200] (model gpt-4 2024-06)))
-```
-
-### Query with variable binding
-
-```
-factum_query: (shareholder-major @ACME-CORP ?holder ?stake)
-```
-
-This returns all major shareholders of ACME-CORP with their stake amounts.
-
-### Historical query ("as of" a specific time)
-
-```
-factum_query with as_of: "2020-01-01T00:00:00Z"
-query: (located-in @ACME-CORP ?loc)
-```
-
-### Retract with cascade
-
-```
-factum_retract: n001
-```
-
-If n006 was derived from n001 (via `:deps [n001]`), it will be
-cascade-retracted automatically.
-
-## How it works
-
-```
-LLM Client (Claude/Cursor)
-    ↕ JSON-RPC 2.0 (stdio)
-factum-mcp-server
-    ↕ Rust API
-factum-rt (store, query, arbitration, permissions)
-    ↕
-factum-core (parser, types, serialization)
-```
-
-The server maintains an in-memory knowledge store. Each session starts fresh.
-For persistent storage (RocksDB backend), see the roadmap (M2).
-
-## Morpheme negotiation
-
-When the client declares `capabilities.factum` in the initialize request, the
-server returns a morpheme table (24 seed morphemes with ID/name/kind). This
-enables compact form encoding — morpheme names are replaced by u32 indices,
-saving bytes in transport.
-
-If the client does not declare `factum` capability, the server omits the
-morpheme table and all responses use string names (graceful degradation).
+A custom client can declare `capabilities.factum` during initialization to
+receive the 24-entry seed morpheme table. Such clients default to compact output
+and may explicitly choose `preferred_form: "canonical"` or `"compact"` inside
+that capability. This extension is optional; Claude Code does not need to send it.
 
 ## Troubleshooting
 
-**Server not responding**: Make sure you're piping newline-delimited JSON. The
-server reads one line at a time. Empty lines are ignored.
+- **Disconnected server:** verify the executable exists, has execute permission,
+  and its configured path is absolute. Build it before launching the client.
+- **Parse error on insert:** use valid Factum node syntax. Entity references use
+  `@`, for example `(instance-of @ACME-CORP @organization)`. Start with the tested
+  node above; use quoted source identifiers such as `(asserted "manual-test")`.
+- **Zero query results:** check that insertion and query reach the same server
+  process, that the node has `:perm public`, and that it has not been retracted.
+  Time and minimum-confidence filters also affect query visibility.
+- **Duplicate node ID:** use a different ID or start a fresh server process.
+- **No output until newline:** stdio reads one JSON object per line. Empty lines
+  are ignored; stdout is reserved for protocol responses.
 
-**Parse error on insert**: The Factum-F source must be valid S-expression.
-Check for balanced parentheses. Common mistakes:
-- Missing `:pred` field
-- Named args before positional args
-- Unbalanced parentheses
+## Tests and further reading
 
-**Query returns 0 results**: Check the `min_confidence` threshold (default 0.0)
-and the permission context. The server uses `public` permission by default —
-nodes with `:perm confidential` or higher will not be visible.
+Run the regression tests, which launch the actual stdio server binary:
 
-## Next steps
+```bash
+cargo test -p factum-mcp
+```
 
-- Read the [LLM authoring guide](authoring-for-llms.md) for syntax details
-- Read the [design rationale](design-rationale.md) for architectural decisions
-- Read the [technical white paper](whitepaper-zh.md) (Chinese) for full overview
-- Check [good first issues](GOOD_FIRST_ISSUES.md) for contribution opportunities
-- See the [roadmap](../ROADMAP.md) for what's planned next
+For more detail, see the [LLM authoring guide](authoring-for-llms.md),
+[design rationale](design-rationale.md), and [roadmap](../ROADMAP.md).
