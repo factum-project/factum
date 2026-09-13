@@ -106,6 +106,8 @@ pub struct ServerInfo {
 pub struct ToolResult {
     pub content: Vec<ContentBlock>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub structuredContent: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub isError: Option<bool>,
 }
 
@@ -115,16 +117,22 @@ pub struct ToolResult {
 pub enum ContentBlock {
     #[serde(rename = "text")]
     Text { text: String },
-    #[serde(rename = "json")]
-    Json { json: serde_json::Value },
 }
 
 impl ContentBlock {
     pub fn text(s: impl Into<String>) -> Self {
         ContentBlock::Text { text: s.into() }
     }
-    pub fn json(v: serde_json::Value) -> Self {
-        ContentBlock::Json { json: v }
+}
+
+impl ToolResult {
+    /// Structured output plus a standard text fallback for MCP clients.
+    pub fn structured(value: serde_json::Value) -> Self {
+        Self {
+            content: vec![ContentBlock::text(value.to_string())],
+            structuredContent: Some(value),
+            isError: Some(false),
+        }
     }
 }
 

@@ -10,6 +10,7 @@ use factum_core::types::*;
 use factum_rt::store::FactumStore;
 use factum_rt::query::{Query, QueryOptions};
 use factum_rt::arbitration::ConflictPolicy;
+use factum_rt::permission::PermissionContext;
 use crate::protocol::*;
 use crate::tools::*;
 
@@ -43,7 +44,17 @@ impl McpHandler {
     pub fn handle(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
         match req.method.as_str() {
             "initialize" => self.handle_initialize(req),
+            "ping" => JsonRpcResponse::success(req.id.clone(), serde_json::json!({})),
             "tools/list" => self.handle_list_tools(req),
+            "resources/list" => self.handle_list_resources(req),
+            "resources/templates/list" => JsonRpcResponse::success(req.id.clone(), serde_json::json!({
+                "resourceTemplates": [{
+                    "uriTemplate": "factum://nodes/{id}",
+                    "name": "Factum node",
+                    "description": "Read an active public knowledge node as canonical Factum text",
+                    "mimeType": "text/plain"
+                }]
+            })),
             "tools/call" => self.handle_call_tool(req),
             "resources/read" => self.handle_read_resource(req),
             _ => JsonRpcResponse::error(req.id.clone(), JsonRpcError::method_not_found()),
@@ -65,6 +76,13 @@ impl McpHandler {
             .and_then(|c| c.get("factum"));
 
         let client_factum_aware = factum_caps.is_some();
+
+        // Plain clients do not have a morpheme table, so return readable canonical text.
+        *self.preferred_form.write() = if client_factum_aware {
+            PreferredForm::Compact
+        } else {
+            PreferredForm::Canonical
+        };
 
         // Negotiate preferred_form (spec/compact-form.md §8)
         if let Some(fc) = factum_caps {
@@ -89,17 +107,17 @@ impl McpHandler {
             Some(table)
         } else {
             // Vanilla MCP client: omit morpheme table.
-            // Compact form will use string names (graceful degradation).
+            // Canonical output needs no custom vocabulary negotiation.
             None
         };
 
         let result = InitializeResult {
             protocolVersion: MCP_PROTOCOL_VERSION.into(),
             capabilities: ServerCapabilities {
-                tools: ToolCapability { listChanged: Some(true) },
+                tools: ToolCapability { listChanged: None },
                 resources: ResourceCapability {
-                    subscribe: Some(true),
-                    listChanged: Some(true),
+                    subscribe: None,
+                    listChanged: None,
                 },
             },
             serverInfo: ServerInfo {
@@ -217,10 +235,7 @@ impl McpHandler {
                     }
                 };
 
-                let tool_result = ToolResult {
-                    content: vec![ContentBlock::json(json)],
-                    isError: Some(false),
-                };
+                let tool_result = ToolResult::structured(json);
                 JsonRpcResponse::success(
                     req.id.clone(),
                     serde_json::to_value(tool_result).unwrap(),
@@ -256,6 +271,7 @@ impl McpHandler {
             Ok(()) => {
                 let tool_result = ToolResult {
                     content: vec![ContentBlock::text("Node inserted successfully")],
+                    structuredContent: None,
                     isError: Some(false),
                 };
                 JsonRpcResponse::success(
@@ -282,10 +298,7 @@ impl McpHandler {
                     "retracted": retracted.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
                     "count": retracted.len(),
                 });
-                let tool_result = ToolResult {
-                    content: vec![ContentBlock::json(json)],
-                    isError: Some(false),
-                };
+                let tool_result = ToolResult::structured(json);
                 JsonRpcResponse::success(
                     req.id.clone(),
                     serde_json::to_value(tool_result).unwrap(),
@@ -294,6 +307,21 @@ impl McpHandler {
             Err(e) => JsonRpcResponse::error(req.id.clone(),
                 JsonRpcError::internal(e.to_string())),
         }
+    }
+
+    /// List active nodes visible to the same public principal used by queries.
+    fn handle_list_resources(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
+        let ctx = PermissionContext::public();
+        let mut nodes: Vec<_> = self.store.all_active().into_iter()
+            .filter(|node| self.store.check_permission(node, &ctx))
+            .collect();
+        nodes.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+        let resources: Vec<_> = nodes.iter().map(|node| serde_json::json!({
+            "uri": node_resource_uri(node.id.as_str()),
+            "name": node.id.as_str(),
+            "mimeType": "text/plain",
+        })).collect();
+        JsonRpcResponse::success(req.id.clone(), serde_json::json!({"resources": resources}))
     }
 
     /// Handle resources/read — read a node resource.
@@ -314,20 +342,18 @@ impl McpHandler {
                 JsonRpcError::invalid_params(format!("invalid resource URI: {}", uri))),
         };
 
-        match self.store.get(&NodeId::new(id)) {
-            Some(node) => {
-                let canonical = serialize::canonical(&node);
-                let tool_result = ToolResult {
-                    content: vec![ContentBlock::text(canonical)],
-                    isError: Some(false),
-                };
-                JsonRpcResponse::success(
-                    req.id.clone(),
-                    serde_json::to_value(tool_result).unwrap(),
-                )
+        match self.store.get_with_perm(&NodeId::new(id), &PermissionContext::public()) {
+            Ok(node) if node.status == NodeStatus::Active => {
+                JsonRpcResponse::success(req.id.clone(), serde_json::json!({
+                    "contents": [{
+                        "uri": uri,
+                        "mimeType": "text/plain",
+                        "text": serialize::canonical(&node),
+                    }]
+                }))
             }
-            None => JsonRpcResponse::error(req.id.clone(),
-                JsonRpcError::invalid_params(format!("node not found: {}", id))),
+            _ => JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params("resource not found or not accessible")),
         }
     }
 }
@@ -477,7 +503,7 @@ mod tests {
         };
         let resp = handler.handle(&query_req);
         assert!(resp.result.is_some());
-        let content = resp.result.unwrap()["content"][0]["json"].clone();
+        let content = resp.result.unwrap()["structuredContent"].clone();
         assert_eq!(content["form"], "canonical");
         // Canonical nodes should be strings (S-expressions), not objects
         assert!(content["nodes"][0].is_string());
@@ -509,7 +535,7 @@ mod tests {
         };
         let resp = handler.handle(&query_req);
         assert!(resp.result.is_some());
-        let content = resp.result.unwrap()["content"][0]["json"].clone();
+        let content = resp.result.unwrap()["structuredContent"].clone();
         // Compact form: no "form" field present
         assert!(content.get("form").is_none());
         assert!(content["count"].as_u64().unwrap_or(0) > 0);
