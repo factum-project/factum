@@ -97,6 +97,11 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 - 📋 Python SDK passes conformance suite
 - 📋 TypeScript SDK passes conformance suite
 
+### Documentation
+- ✅ Confidence & authority calibration guide (`docs/confidence-calibration.md`)
+- 📋 Compact form vs Markdown/JSON efficiency data (published)
+- 📋 Factum-loses dimensions explicitly shown (esp. vs Markdown)
+
 ## M3+: Research 📋
 
 ### factum-l: Latent Space Projection 🔬

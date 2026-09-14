@@ -214,7 +214,10 @@ than present a potentially wrong answer as certain.**
 1. **Always include `:src`**: Every knowledge node should declare where it
    came from. If the LLM generated it, use `extracted` with the model reference.
 2. **Set realistic `:conf`**: Don't default to 1.0 unless you're certain.
-   0.8-0.9 is appropriate for LLM-extracted knowledge.
+   0.8-0.9 is appropriate for LLM-extracted knowledge. See the
+   [Confidence Calibration Guide](confidence-calibration.md) for detailed
+   tables mapping source types and extraction methods to recommended
+   confidence and authority values.
 3. **Use `:deps` for derived facts**: If a fact depends on other facts,
    list them in `:deps`. This enables cascade retraction.
 4. **Prefer named args for optional fields**: `:period`, `:currency`,

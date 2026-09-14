@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ConflictPolicy::Custom silent guess**: `Custom` previously returned the first result silently (`group.into_iter().next().unwrap()`), violating the "We refuse to answer rather than guess" principle. Now sets `ambiguous = true` and returns no result for multi-node groups. Single-node groups still pass through normally.
 - **ArithmeticVerifier → DecimalRangeVerifier**: Renamed to match actual behavior. The verifier only checks decimal scale (≤38) and digit count (≤38), not arithmetic consistency. Doc comment updated to explicitly state this limitation and point to `SolverVerifier` / `LeanVerifier` for future arithmetic checks.
 
+### Added
+- **Confidence calibration guide** (`docs/confidence-calibration.md`): Detailed tables mapping source types, extraction methods, and knowledge categories to recommended `confidence` and `authority` values. Includes practical examples, common mistakes, and query-time threshold guidance.
+
 ### Changed
 - Version: `0.1.0-alpha.1` → `0.1.0` (drop pre-release tag so `cargo add factum-rt` works without explicit version)
 
