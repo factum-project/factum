@@ -6,7 +6,7 @@
 ![CI](https://github.com/factum-project/factum/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-![Factum MCP Demo](docs/demo/factum-mcp-demo.gif)
+![Factum MCP Demo](docs/demo/factum-mcp-demo.png)
 
 > **[Interactive docs](https://factum-project.github.io/factum/)** — animated syntax parsing, 7-tuple explorer, query pipeline, token efficiency chart, and MCP architecture diagram.
 

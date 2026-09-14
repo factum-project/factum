@@ -21,3 +21,6 @@ fuzz/coverage/
 # Environment
 .env
 .env.local
+
+# Demo frame cache (regenerated from capture-frames.js)
+docs/demo/frames/
