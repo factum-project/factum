@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Factum runtime: in-memory store, indexing, query, arbitration"
+repository = "https://github.com/factum-project/factum"
+readme = "README.md"
 
 [features]
 default = []

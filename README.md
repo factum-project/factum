@@ -5,6 +5,7 @@
 
 ![CI](https://github.com/factum-project/factum/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![MCP Registry](https://img.shields.io/badge/MCP-Registry-registered)
 
 ![Factum MCP Demo](docs/demo/factum-mcp-demo.png)
 
@@ -109,6 +110,21 @@ cargo test --features rocksdb
 cargo +nightly fuzz run fuzz_parser -- -max_total_time=600
 ```
 
+### Use as an MCP server (Claude Code / Cursor)
+
+```bash
+# Build the MCP server binary
+cargo build --release -p factum-mcp --bin factum-mcp-server
+
+# Register with Claude Code
+claude mcp add --transport stdio --scope local factum -- "$(pwd)/target/release/factum-mcp-server"
+
+# Verify connection
+claude mcp get factum
+```
+
+See [Getting Started with Factum MCP](docs/getting-started-mcp.md) for the full guide.
+
 ## Factum-F Syntax Example
 
 ```scheme
@@ -207,3 +223,7 @@ MIT
 ## Contributing
 
 Contributions require **DCO sign-off** (`git commit -s`). See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+- MCP Registry name: `mcp-name: io.github.factum-project/factum`

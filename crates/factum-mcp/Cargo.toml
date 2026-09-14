@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "MCP bridge for Factum — JSON-RPC tools and resources"
+repository = "https://github.com/factum-project/factum"
+readme = "README.md"
 
 [dependencies]
 factum-core.workspace = true

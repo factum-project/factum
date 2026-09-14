@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.factum-project/factum",
+  "title": "Factum",
+  "description": "Provenance-aware knowledge language & MCP server: give LLMs verifiable facts with 5-level source tracking, confidence scores, and audit-safe retraction",
+  "repository": {
+    "url": "https://github.com/factum-project/factum",
+    "source": "github"
+  },
+  "version": "0.1.0-alpha.1",
+  "packages": [
+    {
+      "registryType": "cargo",
+      "identifier": "factum-mcp",
+      "version": "0.1.0-alpha.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Core data model, parser, and serialization for Factum"
+repository = "https://github.com/factum-project/factum"
+readme = "README.md"
 
 [dependencies]
 serde.workspace = true

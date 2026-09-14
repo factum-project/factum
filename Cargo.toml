@@ -16,9 +16,9 @@ authors = ["Factum Project"]
 description = "A structured knowledge representation language for LLMs"
 
 [workspace.dependencies]
-# Internal
-factum-core = { path = "crates/factum-core" }
-factum-rt = { path = "crates/factum-rt" }
+# Internal (path + version for crates.io publishing)
+factum-core = { path = "crates/factum-core", version = "0.1.0-alpha.1" }
+factum-rt = { path = "crates/factum-rt", version = "0.1.0-alpha.1" }
 
 # External
 serde = { version = "1", features = ["derive"] }
