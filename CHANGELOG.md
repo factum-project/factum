@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **LatestWins validity tiebreak**: `ConflictPolicy::LatestWins` previously compared only authority, ignoring the promised validity start tiebreak. Now correctly sorts by authority desc, then validity start desc (most recent wins). `Forever` is treated as the least recent. When authority AND validity start are both tied, the result is marked `Ambiguous`.
+- **ConflictPolicy::Custom silent guess**: `Custom` previously returned the first result silently (`group.into_iter().next().unwrap()`), violating the "We refuse to answer rather than guess" principle. Now sets `ambiguous = true` and returns no result for multi-node groups. Single-node groups still pass through normally.
+- **ArithmeticVerifier → DecimalRangeVerifier**: Renamed to match actual behavior. The verifier only checks decimal scale (≤38) and digit count (≤38), not arithmetic consistency. Doc comment updated to explicitly state this limitation and point to `SolverVerifier` / `LeanVerifier` for future arithmetic checks.
+
 ### Changed
 - Version: `0.1.0-alpha.1` → `0.1.0` (drop pre-release tag so `cargo add factum-rt` works without explicit version)
 
@@ -97,7 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **factum-core**: cargo-fuzz targets for parser, serialize round-trip, and lexer
 - **factum-rt**: In-memory store with 6 secondary indices (by_entity, by_pred, by_src, by_perm, deps_rev, by_validity)
 - **factum-rt**: Query engine with variable binding and pattern matching
-- **factum-rt**: Conflict arbitration (LatestWins, HighestAuthority, Unanimous) with Ambiguous refusal
+- **factum-rt**: Conflict arbitration (LatestWins, HighestAuthority, Unanimous, Custom) with Ambiguous refusal
 - **factum-rt**: Index-level permission filtering (no post-query filtering — prevents aggregate leakage)
 - **factum-rt**: Verifier framework with SchemaVerifier (morpheme signature checking) and DecimalRangeVerifier (decimal range checking)
 - **factum-rt**: Subscription manager with pattern-matched event notification
