@@ -6,6 +6,8 @@
 ![CI](https://github.com/factum-project/factum/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
+![Factum MCP Demo](docs/demo/factum-mcp-demo.gif)
+
 > **[Interactive docs](https://factum-project.github.io/factum/)** — animated syntax parsing, 7-tuple explorer, query pipeline, token efficiency chart, and MCP architecture diagram.
 
 Factum is a structured knowledge representation language designed as a **native format for LLMs** — not a human-facing database format. LLMs read it as context, write it as output, and (in the roadmap's endgame) think in its latent-space projection. Every design decision serves LLM-native usage: full parenthesization for parse-safe LLM generation, error class taxonomy for LLM self-correction, compact form for context economy, `Dec(i128, u8)` to catch LLM numeric hallucinations, and mandatory model references on extracted knowledge for LLM self-auditing.

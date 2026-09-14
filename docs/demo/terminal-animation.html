@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Factum MCP Demo</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #1a1b26;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; overflow: hidden;
+}
+.terminal {
+  width: 620px; height: 380px;
+  background: #1a1b26; border-radius: 10px;
+  border: 1px solid #2a2e3e;
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.titlebar {
+  height: 28px; background: #16161e; display: flex;
+  align-items: center; padding: 0 12px; gap: 6px;
+  border-bottom: 1px solid #2a2e3e;
+}
+.dot { width: 10px; height: 10px; border-radius: 50%; }
+.dot.r { background: #f7768e; } .dot.y { background: #e0af68; } .dot.g { background: #9ece6a; }
+.titletext { margin-left: 8px; font-size: 11px; color: #565f89; }
+.body { flex: 1; padding: 10px 14px; overflow: hidden; font-size: 11.5px; line-height: 1.55; }
+.line { white-space: pre-wrap; word-break: break-all; min-height: 1px; }
+.user { color: #7dcfff; } .mcp { color: #9ece6a; }
+.prompt { color: #bb9af7; } .label { color: #565f89; }
+.highlight { color: #e0af68; font-weight: bold; }
+.prov { color: #ff9e64; } .conf { color: #73daca; }
+.fade { color: #414868; } .ok { color: #9ece6a; } .dim { color: #6272a4; }
+.cursor::after { content: '\25AE'; color: #7dcfff; animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.line.hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="terminal">
+  <div class="titlebar">
+    <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+    <span class="titletext">Claude Code — factum-mcp-server</span>
+  </div>
+  <div class="body" id="body"></div>
+</div>
+
+<script>
+const lines = [
+  { t: 300, cls: "prompt", text: "> Insert ACME Corp's major shareholder data" },
+  { t: 200, cls: "label", text: "  client → factum_insert" },
+  { t: 100, cls: "fade", text: '  (node n001 :pred (shareholder-major @ACME-CORP @FOUNDER-1 0.73' },
+  { t: 50, cls: "fade", text: '    :since #date(2001-03-15)) :conf 0.85 :auth 0.8 :perm public' },
+  { t: 50, cls: "fade", text: '    :src (extracted "doc002" [100 200] (model "gpt-4" "2024-06")) :deps [])' },
+  { t: 400, cls: "mcp", text: '  ✓ Node inserted successfully' },
+  { t: 600, cls: "prompt", text: '> Who is the major shareholder of ACME-CORP?" },
+  { t: 200, cls: "label", text: "  client → factum_query" },
+  { t: 100, cls: "fade", text: '  (shareholder-major @ACME-CORP ?holder ?stake)' },
+  { t: 500, cls: "mcp", text: '  ← 1 result (canonical form, -62% tokens vs JSON)' },
+  { t: 200, cls: "mcp", text: '  (node n001' },
+  { t: 100, cls: "mcp", text: '    :pred (shareholder-major @ACME-CORP @FOUNDER-1 0.73' },
+  { t: 100, cls: "mcp", text: '      :since #date(2001-03-15))' },
+  { t: 100, cls: "mcp", text: '    :valid forever' },
+  { t: 100, cls: "prov", text: '    :src (extracted "doc002" [100 200]' },
+  { t: 80, cls: "prov", text: '      (model "gpt-4" "2024-06"))' },
+  { t: 100, cls: "conf", text: '    :conf 0.85 :auth 0.8 :perm public)' },
+  { t: 700, cls: "highlight", text: '  → provenance: extracted from doc002 by gpt-4 (2024-06)' },
+  { t: 200, cls: "highlight", text: '  → confidence: 0.85  authority: 0.8' },
+  { t: 300, cls: "highlight", text: '  → permission: public (visible to all roles)' },
+  { t: 800, cls: "prompt", text: '> Retract n001 — source document superseded' },
+  { t: 200, cls: "label", text: "  client → factum_retract" },
+  { t: 400, cls: "mcp", text: '  ✓ Retracted 1 node: n001' },
+  { t: 200, cls: "mcp", text: '  (cascade: 0 derived nodes affected)' },
+  { t: 600, cls: "prompt", text: '> Query again — same question' },
+  { t: 200, cls: "label", text: "  client → factum_query" },
+  { t: 400, cls: "mcp", text: '  ← 0 results (node retracted, audit trail retained)' },
+  { t: 800, cls: "dim", text: '  factum-mcp-server · 6 JSON-RPC round-trips · 112 tests passing' },
+  { t: 100, cls: "dim", text: '  github.com/factum-project/factum' },
+];
+
+const body = document.getElementById('body');
+let idx = 0;
+
+function nextLine() {
+  if (idx >= lines.length) {
+    setTimeout(() => { body.innerHTML = ''; idx = 0; nextLine(); }, 3000);
+    return;
+  }
+  const l = lines[idx];
+  const el = document.createElement('div');
+  el.className = 'line ' + l.cls + (idx === lines.length - 1 ? '' : '');
+  el.textContent = l.text;
+  body.appendChild(el);
+
+  // Keep only last ~18 visible lines
+  while (body.children.length > 18) {
+    body.removeChild(body.firstChild);
+  }
+
+  idx++;
+  setTimeout(nextLine, l.t);
+}
+
+// Start animation
+setTimeout(nextLine, 500);
+</script>
+</body>
+</html>
