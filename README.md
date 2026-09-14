@@ -33,7 +33,7 @@ Enterprise provenance, RAG enhancement, and MCP knowledge bases are **where this
 | factum-bench (benchmarks) | ✅ Implemented | Syntax round-trip + token efficiency + query perf |
 | factum-l (latent space projection) | ❌ Not started | Planned, research-grade — see ROADMAP.md |
 | Wikidata/Mathlib corpus converters | ❌ Not started | M2 milestone |
-| Lean/Z3 verifiers | ❌ Not started | Only Schema + Arithmetic verifiers implemented |
+| Lean/Z3 verifiers | ❌ Not started | Only Schema + DecimalRange verifiers implemented |
 | Inspector (visual debugger) | ❌ Not started | |
 
 ## Key Features (Implemented)
