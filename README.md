@@ -6,6 +6,8 @@
 ![CI](https://github.com/factum-project/factum/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
+> **[Interactive docs](https://factum-project.github.io/factum/)** — animated syntax parsing, 7-tuple explorer, query pipeline, token efficiency chart, and MCP architecture diagram.
+
 Factum is a structured knowledge representation language designed as a **native format for LLMs** — not a human-facing database format. LLMs read it as context, write it as output, and (in the roadmap's endgame) think in its latent-space projection. Every design decision serves LLM-native usage: full parenthesization for parse-safe LLM generation, error class taxonomy for LLM self-correction, compact form for context economy, `Dec(i128, u8)` to catch LLM numeric hallucinations, and mandatory model references on extracted knowledge for LLM self-auditing.
 
 ## Three-Layer Vision
@@ -23,8 +25,8 @@ Enterprise provenance, RAG enhancement, and MCP knowledge bases are **where this
 | Module | Status | Notes |
 |--------|--------|-------|
 | factum-core (types, lexer, parser, serialize) | ✅ Implemented | 100% syntactic round-trip |
-| factum-rt (store, query, arbitration, permissions, verifiers) | ✅ Implemented | **In-memory store** — RocksDB backend is a roadmap item |
-| factum-mcp (JSON-RPC bridge) | ✅ Protocol + handler | Protocol layer + request handler implemented; **stdio transport unverified**, **HTTP transport not implemented**, **not yet tested with real MCP hosts** |
+| factum-rt (store, query, arbitration, permissions, verifiers) | ✅ Implemented | In-memory store (default) + **RocksDB persistence backend** (`--features rocksdb`, feature-gated); 5 column families, WriteBatch atomic writes, crash-durable |
+| factum-mcp (JSON-RPC bridge) | ✅ Protocol + handler | Protocol layer + request handler implemented; **stdio transport verified** end-to-end (real stdin/stdout, MCP notification handling, resource discovery); HTTP transport not yet implemented; see [Getting Started](docs/getting-started-mcp.md) for Claude Code / Cursor setup |
 | factum-bench (benchmarks) | ✅ Implemented | Syntax round-trip + token efficiency + query perf |
 | factum-l (latent space projection) | ❌ Not started | Planned, research-grade — see ROADMAP.md |
 | Wikidata/Mathlib corpus converters | ❌ Not started | M2 milestone |
@@ -36,10 +38,10 @@ Enterprise provenance, RAG enhancement, and MCP knowledge bases are **where this
 - **Node 7-tuple**: Every knowledge node carries id, predicate, validity, provenance, confidence, authority, and permissions
 - **Lossless numerics**: All numbers use `Dec(i128, u8)` — zero floating-point error
 - **5-level provenance**: Verbatim / Summary / Extracted / Derived / Asserted — full audit chain
-- **Index-level permissions**: No post-query filtering — prevents aggregate leakage (**currently in-memory; RocksDB bitmap intersection is roadmap**)
+- **Index-level permissions**: No post-query filtering — prevents aggregate leakage
 - **Conflict arbitration**: LatestWins / HighestAuthority / Unanimous — refuses to guess when ambiguous
 - **Cascade retraction**: Derived nodes auto-invalidate when upstream sources are retracted
-- **MCP bridge**: JSON-RPC 2.0 tools/resources with morpheme table negotiation for token efficiency
+- **MCP bridge**: JSON-RPC 2.0 tools/resources with morpheme table negotiation for token efficiency; **stdio transport verified** with real MCP clients (Claude Code, Cursor)
 
 ## Round-Trip Fidelity — What Exactly Is 100%?
 
@@ -67,20 +69,22 @@ For v0.1-alpha, Entity names (`@Foo`), Symbols, and Node IDs are limited to **AS
 factum/
 ├── crates/
 │   ├── factum-core/     # Data model, lexer, parser, serialization
-│   ├── factum-rt/       # Runtime: store, query, arbitration, permissions, verifiers
-│   ├── factum-mcp/      # MCP bridge: JSON-RPC tools/resources
+│   ├── factum-rt/       # Runtime: store (InMemory + RocksDB), query, arbitration, permissions, verifiers
+│   ├── factum-mcp/      # MCP bridge: JSON-RPC tools/resources, stdio transport
 │   ├── factum-bench/    # Benchmarks: round-trip, token efficiency, query perf
 │   └── factum-demo/     # End-to-end demonstration
 ├── fuzz/              # cargo-fuzz targets (parser, serialize round-trip, lexer)
 ├── spec/              # Conformance test vectors (JSON, language-agnostic)
-├── .github/workflows/ # CI: test + fuzz + gitleaks
+├── docs/site/         # Interactive visualization (GitHub Pages)
+├── .github/workflows/ # CI: test + fuzz + gitleaks + Pages deploy
 ├── Cargo.toml         # Workspace root
 ├── ROADMAP.md         # What's planned and in what order
 ├── SECURITY.md        # Vulnerability disclosure
 ├── CONTRIBUTING.md    # How to contribute
 ├── CHANGELOG.md       # Version history
 ├── docs/design-rationale.md     # Why each architectural decision was made
-└── docs/authoring-for-llms.md   # LLM guide for generating Factum-F
+├── docs/authoring-for-llms.md   # LLM guide for generating Factum-F
+└── docs/getting-started-mcp.md  # MCP setup guide (Claude Code / Cursor)
 ```
 
 ## Quick Start
@@ -94,6 +98,10 @@ cargo test
 
 # Run demo
 cargo run -p factum-demo
+
+# Build with RocksDB persistence backend
+cargo build --features rocksdb
+cargo test --features rocksdb
 
 # Fuzz (requires nightly)
 cargo +nightly fuzz run fuzz_parser -- -max_total_time=600
@@ -149,7 +157,7 @@ All byte percentages use **pretty JSON with the same 7-tuple metadata** as the b
 
 **Key finding — canonical beats compact on tokens**: The canonical S-expression form (238 tokens) is more token-efficient than the compact JSON form (290 tokens). BPE tokenizers split JSON delimiters (`{`, `}`, `"`, `:`) into individual tokens, while S-expression parentheses and whitespace are frequently merged with adjacent tokens. **The form designed for correctness is also the most token-efficient form for LLM context windows.**
 
-**Form-positioning implication**: This confirms the heuristic finding. The proposed `capabilities.factum.preferred_form` negotiation (see `spec/compact-form.md` §8) should serve canonical to LLM clients and reposition compact as a storage/service-to-service format.
+**Form-positioning implication**: This confirms the initial finding. The implemented `capabilities.factum.preferred_form` negotiation (see `spec/compact-form.md` §8) serves canonical to LLM clients and repositions compact as a storage/service-to-service format.
 
 **The fair comparison is Factum compact vs pretty-JSON-with-same-metadata** — compact saves 68% bytes and 53% tokens.
 

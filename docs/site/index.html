@@ -576,7 +576,7 @@ footer { background: var(--bg); padding: 32px 0; text-align: center; font-size: 
 <section id="mcp">
 <div class="container">
 <h2>MCP Integration</h2>
-<div class="lead">Communicates with LLM clients via Model Context Protocol, JSON-RPC 2.0, compatible with MCP 2025-06-18.</div>
+<div class="lead">Communicates with LLM clients via Model Context Protocol, JSON-RPC 2.0, compatible with MCP 2025-06-18. <strong>stdio transport verified</strong> with Claude Code and Cursor — see <a href="https://github.com/factum-project/factum/blob/main/docs/getting-started-mcp.md" style="color: var(--blue);">Getting Started guide</a>.</div>
 <div class="mcp-flow">
 <div class="mcp-layer">
 <div class="layer-icon" style="background: var(--purple-light); color: var(--purple);">LLM</div>
@@ -598,7 +598,7 @@ footer { background: var(--bg); padding: 32px 0; text-align: center; font-size: 
 <div class="layer-icon" style="background: var(--teal-light); color: var(--teal);">RT</div>
 <div class="layer-content">
 <div class="layer-name">factum-rt (Runtime)</div>
-<div class="layer-desc">Storage &#183; 6 indices &#183; query engine &#183; arbitration &#183; permissions &#183; cascade retraction &#183; verifier</div>
+<div class="layer-desc">Storage (InMemory + RocksDB) &#183; 6 indices &#183; query engine &#183; arbitration &#183; permissions &#183; cascade retraction &#183; verifier</div>
 </div>
 </div>
 <div class="mcp-arrow">&#8597;</div>
@@ -667,15 +667,15 @@ footer { background: var(--bg); padding: 32px 0; text-align: center; font-size: 
 <div class="roadmap-timeline">
 <div class="milestone done">
 <span class="ms-title">M0: Core Implementation</span><span class="ms-status" style="background: var(--teal-light); color: var(--teal);">Done</span>
-<div class="ms-items">factum-core / factum-rt / factum-mcp / factum-bench fully implemented, 91 tests passing</div>
+<div class="ms-items">factum-core / factum-rt / factum-mcp / factum-bench fully implemented, 112 tests passing</div>
 </div>
 <div class="milestone progress">
 <span class="ms-title">M1: Open-Source Alpha</span><span class="ms-status" style="background: var(--amber-light); color: var(--amber);">In Progress</span>
-<div class="ms-items">README / CI / conformance vectors / authoring guide / Good first issues — exit criteria: fuzzing stable 1 week + 3 external reviewers</div>
+<div class="ms-items">README / CI / conformance vectors / authoring guide / Good first issues / RocksDB persistence / stdio transport verified / preferred_form negotiation — exit criteria: fuzzing stable 1 week + 3 external reviewers</div>
 </div>
 <div class="milestone planned">
 <span class="ms-title">M2: Adoption-Ready</span><span class="ms-status" style="background: var(--bg-ter); color: var(--text-sec);">Planned</span>
-<div class="ms-items">RocksDB backend &#183; stdio/HTTP transport validation &#183; Claude Code/Cursor integration &#183; Wikidata converter &#183; 200+ morphemes &#183; Z3/Lean verifier &#183; real tokenizer measurement</div>
+<div class="ms-items">HTTP transport &#183; Claude Code/Cursor integration tests &#183; Wikidata converter &#183; 200+ morphemes &#183; Z3/Lean verifier &#183; MVCC concurrency</div>
 </div>
 <div class="milestone planned">
 <span class="ms-title">M3+: Research</span><span class="ms-status" style="background: var(--purple-light); color: var(--purple);">Research</span>
@@ -684,9 +684,9 @@ footer { background: var(--bg); padding: 32px 0; text-align: center; font-size: 
 </div>
 <div class="stats mt-24">
 <div class="stat"><div class="stat-num">24</div><div class="stat-label">Seed morphemes</div></div>
-<div class="stat"><div class="stat-num">6</div><div class="stat-label">Storage indices</div></div>
+<div class="stat"><div class="stat-num">5</div><div class="stat-label">RocksDB column families</div></div>
 <div class="stat"><div class="stat-num">3</div><div class="stat-label">MCP tools</div></div>
-<div class="stat"><div class="stat-num">7</div><div class="stat-label">Error classes</div></div>
+<div class="stat"><div class="stat-num">112</div><div class="stat-label">Tests passing</div></div>
 </div>
 </div>
 </section>
