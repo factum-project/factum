@@ -1,6 +1,6 @@
 # Factum — A Native Knowledge Language for LLMs
 
-> **Status: v0.1.0-alpha.1 — Working draft, seeking early collaborators.**
+> **Status: v0.1.0 — Working draft, seeking early collaborators.**
 > Not a release. Not production-ready. Architectural decisions are still open to change.
 
 ![CI](https://github.com/factum-project/factum/actions/workflows/ci.yml/badge.svg)

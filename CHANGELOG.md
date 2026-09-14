@@ -3,10 +3,12 @@
 All notable changes to Factum will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-(with the `-alpha` suffix indicating pre-release status).
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+- Version: `0.1.0-alpha.1` → `0.1.0` (drop pre-release tag so `cargo add factum-rt` works without explicit version)
 
 ### Added
 - **RocksDB persistence backend** (feature `rocksdb`): `RocksDBBackend` implements `StorageBackend` trait with 5 column families (nodes + by_entity + by_pred + by_src + by_perm). Uses bincode for Node serialization, RocksDB's native WAL for durability, and `WriteBatch` for atomic multi-key writes. `FactumStore::with_rocksdb(path, registry)` constructor opens or creates a persistent database. `deps_rev` and `by_validity` indices are rebuilt in-memory on startup from persisted node data.
@@ -62,8 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README "What's Implemented" table: factum-mcp now shows protocol+handler ✅, transport not verified
 - Benchmark numbers unified: all percentages use pretty-JSON-with-same-metadata as baseline (compact = −76%)
 - Benchmark table baseline row: "Same data as Markdown + no metadata" → "Same 7-tuple metadata in verbose JSON encoding" (fixes self-contradiction)
-- Version: `0.1.0` → `0.1.0-alpha.1` (semver pre-release format for crates.io compatibility)
-- README status line: `v0.1.0-alpha` → `v0.1.0-alpha.1` (match workspace version)
+- Version: `0.1.0` → `0.1.0` (no change; unified to `0.1.0`)
+- README status line: `v0.1.0-alpha` → `v0.1.0` (match workspace version)
 - All Huawei-specific examples replaced with generic names: @ACME-CORP / @FOUNDER-1 / @ACME-SUB / @ACME-HQ
 - Factum-aware client detection: changed from `clientInfo.factum_aware` to standard MCP `capabilities.factum` capability declaration
 - CONTRIBUTING testing table: morpheme mechanism updated to reflect current `seed_morphemes()` (pre-M2) vs future `morphemes.toml` (M2+)

@@ -7,12 +7,12 @@
     "url": "https://github.com/factum-project/factum",
     "source": "github"
   },
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0",
   "packages": [
     {
       "registryType": "cargo",
       "identifier": "factum-mcp",
-      "version": "0.1.0-alpha.1",
+      "version": "0.1.0",
       "transport": {
         "type": "stdio"
       }

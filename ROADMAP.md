@@ -37,7 +37,7 @@ This roadmap tracks what's planned, in priority order. Items before the M2 line 
 - ✅ Design rationale document (`docs/design-rationale.md`)
 - ✅ Placeholder emails replaced with `@factum.dev` + GitHub Security Advisory fallback
 - ✅ GitHub org URL unified (`factum-project/factum`)
-- ✅ Version: `0.1.0-alpha.1` (semver pre-release format)
+- ✅ Version: `0.1.0`
 - ✅ Benchmark numbers unified (pretty-JSON baseline)
 - ✅ Token efficiency table (real o200k_base measurement via tiktoken-rs; issue #9 resolved)
 - ✅ LLM authoring guide (`docs/authoring-for-llms.md`)
