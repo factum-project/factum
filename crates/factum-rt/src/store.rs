@@ -1,57 +1,55 @@
 //! Factum store — the persistence and indexing layer.
 //!
 //! ## Design Decisions
-//! - **In-memory HashMap** for v0.1 (production: RocksDB with WAL + MVCC)
+//! - **StorageBackend trait** abstracts persistence (InMemory or RocksDB)
 //! - **Index-level permission filtering** — NOT post-query filtering
 //!   (post-filtering leaks aggregate information to unauthorized users)
 //! - **Secondary indices** are separate from main store and can be rebuilt
 //! - **Soft delete only** — retracted nodes are marked, never removed
 //!   (supports "as of" historical queries and audit trails)
+//! - **deps_rev and by_validity** are in-memory indices rebuilt on startup
+//!   from the persistent nodes data.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
-use ahash::AHashMap;
 use factum_core::types::*;
 use factum_core::morphemes::MorphemeRegistry;
 use crate::permission::PermissionContext;
 use crate::subscription::SubscriptionManager;
 use crate::verifier::{VerifierRegistry, Verdict};
+use crate::storage::{
+    StorageBackend, InMemoryBackend, StorageError, WriteOp, cf,
+    encode_index_key,
+};
 
 /// The main Factum store.
 ///
-/// Thread-safe via `parking_lot::RwLock`.
-/// All writes are atomic at the method level (production: `write_batch`).
+/// Thread-safe via `parking_lot::RwLock` on in-memory indices and
+/// `Arc<dyn StorageBackend>` for the persistence layer.
+///
+/// All writes are atomic at the method level. For multi-node atomic writes,
+/// use `insert_batch()`.
 pub struct FactumStore {
-    /// Main storage: NodeId → Node
-    nodes: RwLock<AHashMap<NodeId, Arc<Node>>>,
-
-    /// Secondary index: EntityId → [NodeId]
-    by_entity: RwLock<HashMap<EntityId, Vec<NodeId>>>,
-
-    /// Secondary index: MorphemeId/Morpheme name → [NodeId]
-    by_pred: RwLock<HashMap<String, Vec<NodeId>>>,
-
-    /// Secondary index: DocId → [NodeId] (for document-level retraction)
-    by_src: RwLock<HashMap<String, Vec<NodeId>>>,
-
-    /// Secondary index: PermissionTag bitmask → [NodeId]
-    by_perm: RwLock<HashMap<u32, Vec<NodeId>>>,
+    /// Pluggable storage backend (InMemory or RocksDB).
+    backend: Arc<dyn StorageBackend>,
 
     /// Reverse dependency: NodeId → [NodeIds that depend on it]
     /// Used for cascade invalidation when upstream nodes are retracted.
+    /// Rebuilt in-memory from `deps` fields on startup.
     deps_rev: RwLock<HashMap<NodeId, Vec<NodeId>>>,
 
     /// Validity index: sorted by validity window for temporal queries.
     /// (from_timestamp, until_timestamp_or_max, NodeId)
-    /// Uses BTreeMap for efficient range queries.
+    /// Rebuilt in-memory on startup.
     by_validity: RwLock<BTreeMap<(i64, i64), Vec<NodeId>>>,
 
     /// Morpheme registry for resolving names.
     registry: Arc<MorphemeRegistry>,
 
-    /// Write-ahead log for event replay (in-memory for v0.1).
+    /// Write-ahead log for event replay (in-memory backend only).
+    /// RocksDB backend uses RocksDB's native WAL.
     wal: RwLock<Vec<WalEntry>>,
 
     /// Subscription manager for push notifications on insert/retract.
@@ -81,29 +79,88 @@ pub enum StoreError {
     PermissionDenied,
     #[error("invalid node: {0}")]
     InvalidNode(String),
+    #[error("storage error: {0}")]
+    Storage(String),
+}
+
+impl From<StorageError> for StoreError {
+    fn from(e: StorageError) -> Self {
+        StoreError::Storage(e.to_string())
+    }
 }
 
 impl FactumStore {
-    /// Create a new empty store with the given morpheme registry.
+    /// Create a new empty store with the given morpheme registry (in-memory backend).
     pub fn new(registry: Arc<MorphemeRegistry>) -> Self {
-        Self {
-            nodes: RwLock::new(AHashMap::new()),
-            by_entity: RwLock::new(HashMap::new()),
-            by_pred: RwLock::new(HashMap::new()),
-            by_src: RwLock::new(HashMap::new()),
-            by_perm: RwLock::new(HashMap::new()),
+        Self::with_backend(Arc::new(InMemoryBackend::new()), registry)
+    }
+
+    /// Create a store with default seed morphemes (in-memory backend).
+    pub fn with_seeds() -> Self {
+        Self::new(Arc::new(MorphemeRegistry::with_seeds()))
+    }
+
+    /// Create a store with a custom storage backend.
+    pub fn with_backend(backend: Arc<dyn StorageBackend>, registry: Arc<MorphemeRegistry>) -> Self {
+        let store = Self {
+            backend,
             deps_rev: RwLock::new(HashMap::new()),
             by_validity: RwLock::new(BTreeMap::new()),
             registry,
             wal: RwLock::new(Vec::new()),
             subscriptions: SubscriptionManager::new(),
             verifiers: RwLock::new(None),
-        }
+        };
+        // Rebuild in-memory indices from persisted data
+        store.rebuild_indices();
+        store
     }
 
-    /// Create a store with default seed morphemes.
-    pub fn with_seeds() -> Self {
-        Self::new(Arc::new(MorphemeRegistry::with_seeds()))
+    /// Create a persistent store backed by RocksDB.
+    #[cfg(feature = "rocksdb")]
+    pub fn with_rocksdb(path: impl AsRef<std::path::Path>, registry: Arc<MorphemeRegistry>) -> Result<Self, StoreError> {
+        let backend = crate::rocksdb_backend::RocksDBBackend::open(path, registry.clone())?;
+        Ok(Self::with_backend(Arc::new(backend), registry))
+    }
+
+    /// Rebuild deps_rev and by_validity from persisted nodes.
+    fn rebuild_indices(&self) {
+        let nodes = match self.backend.iter_nodes() {
+            Ok(n) => n,
+            Err(_) => return,
+        };
+
+        // Rebuild deps_rev
+        {
+            let mut deps_rev = self.deps_rev.write();
+            deps_rev.clear();
+            for node in &nodes {
+                for dep in &node.deps {
+                    deps_rev
+                        .entry(dep.clone())
+                        .or_default()
+                        .push(node.id.clone());
+                }
+            }
+        }
+
+        // Rebuild by_validity
+        {
+            let mut by_validity = self.by_validity.write();
+            by_validity.clear();
+            for node in &nodes {
+                let (from_ts, until_ts) = match node.validity {
+                    Validity::Forever => (i64::MIN, i64::MAX),
+                    Validity::Window { from, until } => {
+                        (from.timestamp(), until.map_or(i64::MAX, |u| u.timestamp()))
+                    }
+                };
+                by_validity
+                    .entry((from_ts, until_ts))
+                    .or_default()
+                    .push(node.id.clone());
+            }
+        }
     }
 
     /// Get the morpheme registry.
@@ -148,32 +205,25 @@ impl FactumStore {
         }
 
         // Check for duplicate
-        {
-            let nodes = self.nodes.read();
-            if nodes.contains_key(&id) {
-                return Err(StoreError::AlreadyExists(id.to_string()));
-            }
+        if self.backend.get_node(&id)?.is_some() {
+            return Err(StoreError::AlreadyExists(id.to_string()));
         }
 
-        // WAL
+        // Build batch write operations
+        let ops = self.build_insert_ops(&node);
+
+        // WAL (in-memory backend only)
         self.wal.write().push(WalEntry::Insert(Box::new(node.clone())));
 
-        // Update indices
-        self.update_indices(&node);
+        // Execute atomically
+        self.backend.batch_write(ops)?;
 
-        // Update reverse deps
-        for dep in &node.deps {
-            self.deps_rev.write()
-                .entry(dep.clone())
-                .or_default()
-                .push(id.clone());
-        }
+        // Update in-memory indices
+        self.update_deps_rev(&node);
 
-        // Insert into main store
+        // Insert into store (via backend, already done in batch_write)
+        // But we need Arc<Node> for subscription notification
         let arc_node = Arc::new(node);
-        self.nodes.write().insert(id, arc_node.clone());
-
-        // Notify subscribers
         self.subscriptions.notify_insert(&arc_node);
 
         Ok(())
@@ -193,27 +243,28 @@ impl FactumStore {
 
         // Pre-check: no duplicates within batch or with existing
         {
-            let store = self.nodes.read();
             let mut seen = HashSet::new();
             for node in &nodes {
-                if store.contains_key(&node.id) || !seen.insert(node.id.clone()) {
+                if self.backend.get_node(&node.id)?.is_some() || !seen.insert(node.id.clone()) {
                     return Err(StoreError::AlreadyExists(node.id.to_string()));
                 }
             }
         }
 
-        // Insert all
-        for node in nodes {
+        // Build all batch operations
+        let mut all_ops = Vec::new();
+        for node in &nodes {
+            all_ops.extend(self.build_insert_ops(node));
+        }
+
+        // Execute atomically
+        self.backend.batch_write(all_ops)?;
+
+        // Update in-memory indices and notify
+        for node in &nodes {
+            self.update_deps_rev(node);
             self.wal.write().push(WalEntry::Insert(Box::new(node.clone())));
-            self.update_indices(&node);
-            for dep in &node.deps {
-                self.deps_rev.write()
-                    .entry(dep.clone())
-                    .or_default()
-                    .push(node.id.clone());
-            }
-            let arc_node = Arc::new(node);
-            self.nodes.write().insert(arc_node.id.clone(), arc_node.clone());
+            let arc_node = Arc::new(node.clone());
             self.subscriptions.notify_insert(&arc_node);
         }
 
@@ -227,20 +278,15 @@ impl FactumStore {
     /// All downstream Derived nodes are cascade-retracted via deps_rev.
     pub fn retract(&self, id: &NodeId) -> Result<Vec<NodeId>, StoreError> {
         // Get the node
-        let _node = {
-            let nodes = self.nodes.read();
-            nodes.get(id).cloned().ok_or_else(|| StoreError::NotFound(id.to_string()))?
-        };
+        let node = self.backend.get_node(id)?
+            .ok_or_else(|| StoreError::NotFound(id.to_string()))?;
 
         // Mark as retracted
-        {
-            let mut nodes = self.nodes.write();
-            let arc_node = nodes.get_mut(id).unwrap();
-            // We need to clone to modify since it's Arc
-            let mut new_node = (**arc_node).clone();
-            new_node.status = NodeStatus::Retracted;
-            *arc_node = Arc::new(new_node);
-        }
+        let mut new_node = (*node).clone();
+        new_node.status = NodeStatus::Retracted;
+
+        // Write the retracted node
+        self.backend.put_node(&new_node)?;
 
         self.wal.write().push(WalEntry::Retract(id.clone()));
 
@@ -250,7 +296,7 @@ impl FactumStore {
         let mut all_retracted = vec![id.clone()];
         for dep_id in &dependents {
             // Only cascade-retract Derived nodes
-            let dep_node = self.nodes.read().get(dep_id).cloned();
+            let dep_node = self.backend.get_node(dep_id)?;
             if let Some(n) = dep_node {
                 if matches!(n.provenance, Provenance::Derived { .. }) && n.status == NodeStatus::Active {
                     let mut further = self.retract(dep_id)?;
@@ -269,7 +315,7 @@ impl FactumStore {
 
     /// Get a node by ID.
     pub fn get(&self, id: &NodeId) -> Option<Arc<Node>> {
-        self.nodes.read().get(id).cloned()
+        self.backend.get_node(id).ok().flatten()
     }
 
     /// Get a node by ID, checking permissions.
@@ -283,43 +329,46 @@ impl FactumStore {
 
     /// Get all nodes (for testing/admin only).
     pub fn all(&self) -> Vec<Arc<Node>> {
-        self.nodes.read().values().cloned().collect()
+        self.backend.iter_nodes().unwrap_or_default()
     }
 
     /// Get all active (non-retracted) nodes.
     pub fn all_active(&self) -> Vec<Arc<Node>> {
-        self.nodes.read().values()
+        self.backend.iter_nodes()
+            .unwrap_or_default()
+            .into_iter()
             .filter(|n| n.status == NodeStatus::Active)
-            .cloned()
             .collect()
     }
 
     /// Lookup nodes by entity.
     pub fn lookup_by_entity(&self, entity: &EntityId) -> Vec<Arc<Node>> {
-        let ids = self.by_entity.read().get(entity).cloned().unwrap_or_default();
+        let prefix = entity.as_str().as_bytes();
+        let ids = self.backend.scan_index(cf::BY_ENTITY, prefix).unwrap_or_default();
         self.resolve_nodes(&ids)
     }
 
     /// Lookup nodes by predicate head name.
     pub fn lookup_by_pred(&self, head: &str) -> Vec<Arc<Node>> {
-        let ids = self.by_pred.read().get(head).cloned().unwrap_or_default();
+        let prefix = head.as_bytes();
+        let ids = self.backend.scan_index(cf::BY_PRED, prefix).unwrap_or_default();
         self.resolve_nodes(&ids)
     }
 
     /// Lookup nodes by source document.
     pub fn lookup_by_doc(&self, doc: &str) -> Vec<Arc<Node>> {
-        let ids = self.by_src.read().get(doc).cloned().unwrap_or_default();
+        let prefix = doc.as_bytes();
+        let ids = self.backend.scan_index(cf::BY_SRC, prefix).unwrap_or_default();
         self.resolve_nodes(&ids)
     }
 
     /// Lookup nodes valid at a specific time.
     pub fn lookup_valid_at(&self, t: DateTime<Utc>) -> Vec<Arc<Node>> {
-        let nodes = self.nodes.read();
+        let nodes = self.backend.iter_nodes().unwrap_or_default();
 
         // Filter by validity
-        nodes.values()
+        nodes.into_iter()
             .filter(|n| n.status == NodeStatus::Active && n.validity.is_valid_at(t))
-            .cloned()
             .collect()
     }
 
@@ -330,7 +379,7 @@ impl FactumStore {
 
     /// Total node count.
     pub fn len(&self) -> usize {
-        self.nodes.read().len()
+        self.backend.len().unwrap_or(0)
     }
 
     /// Is the store empty?
@@ -345,21 +394,20 @@ impl FactumStore {
 
     // ─── Internal Helpers ──────────────────────────────
 
-    fn resolve_nodes(&self, ids: &[NodeId]) -> Vec<Arc<Node>> {
-        let nodes = self.nodes.read();
-        ids.iter()
-            .filter_map(|id| nodes.get(id).cloned())
-            .filter(|n| n.status == NodeStatus::Active)
-            .collect()
-    }
+    /// Build the batch write operations for inserting a node.
+    /// This includes the node itself and all secondary index entries.
+    fn build_insert_ops(&self, node: &Node) -> Vec<WriteOp> {
+        let mut ops = Vec::new();
 
-    fn update_indices(&self, node: &Node) {
+        // Put the node
+        ops.push(WriteOp::PutNode(node.clone()));
+
         // by_entity: extract entity references from predicate args
         for arg in &node.predicate.args {
-            self.index_term_entity(arg, &node.id);
+            self.collect_entity_index_ops(arg, &node.id, &mut ops);
         }
         for (_, val) in &node.predicate.named {
-            self.index_term_entity(val, &node.id);
+            self.collect_entity_index_ops(val, &node.id, &mut ops);
         }
 
         // by_pred
@@ -371,10 +419,8 @@ impl FactumStore {
                     .unwrap_or_else(|| format!("M{}", id.0))
             }
         };
-        self.by_pred.write()
-            .entry(head_key)
-            .or_default()
-            .push(node.id.clone());
+        let key = encode_index_key(head_key.as_bytes(), &node.id);
+        ops.push(WriteOp::PutIndex { cf: cf::BY_PRED, key, node_id: node.id.clone() });
 
         // by_src
         let src_key = match &node.provenance {
@@ -384,49 +430,54 @@ impl FactumStore {
             Provenance::Derived { from, .. } => Some(from.to_string()),
             Provenance::Asserted { by } => Some(by.0.to_string()),
         };
-        if let Some(key) = src_key {
-            self.by_src.write().entry(key).or_default().push(node.id.clone());
+        if let Some(key_str) = src_key {
+            let key = encode_index_key(key_str.as_bytes(), &node.id);
+            ops.push(WriteOp::PutIndex { cf: cf::BY_SRC, key, node_id: node.id.clone() });
         }
 
         // by_perm
-        self.by_perm.write()
-            .entry(node.permissions.0)
-            .or_default()
-            .push(node.id.clone());
+        let key = encode_index_key(&node.permissions.0.to_be_bytes(), &node.id);
+        ops.push(WriteOp::PutIndex { cf: cf::BY_PERM, key, node_id: node.id.clone() });
 
-        // by_validity
-        let (from_ts, until_ts) = match node.validity {
-            Validity::Forever => (i64::MIN, i64::MAX),
-            Validity::Window { from, until } => {
-                (from.timestamp(), until.map_or(i64::MAX, |u| u.timestamp()))
-            }
-        };
-        self.by_validity.write()
-            .entry((from_ts, until_ts))
-            .or_default()
-            .push(node.id.clone());
+        ops
     }
 
-    fn index_term_entity(&self, term: &Term, node_id: &NodeId) {
+    /// Recursively collect entity index operations from a Term.
+    fn collect_entity_index_ops(&self, term: &Term, node_id: &NodeId, ops: &mut Vec<WriteOp>) {
         match term {
             Term::Ent(e) => {
-                self.by_entity.write()
-                    .entry(e.clone())
-                    .or_default()
-                    .push(node_id.clone());
+                let key = encode_index_key(e.as_str().as_bytes(), node_id);
+                ops.push(WriteOp::PutIndex { cf: cf::BY_ENTITY, key, node_id: node_id.clone() });
             }
             Term::Compound(pred) => {
                 for arg in &pred.args {
-                    self.index_term_entity(arg, node_id);
+                    self.collect_entity_index_ops(arg, node_id, ops);
                 }
             }
             Term::List(items) => {
                 for item in items {
-                    self.index_term_entity(item, node_id);
+                    self.collect_entity_index_ops(item, node_id, ops);
                 }
             }
             _ => {}
         }
+    }
+
+    /// Update deps_rev for a newly inserted node.
+    fn update_deps_rev(&self, node: &Node) {
+        for dep in &node.deps {
+            self.deps_rev.write()
+                .entry(dep.clone())
+                .or_default()
+                .push(node.id.clone());
+        }
+    }
+
+    fn resolve_nodes(&self, ids: &[NodeId]) -> Vec<Arc<Node>> {
+        ids.iter()
+            .filter_map(|id| self.backend.get_node(id).ok().flatten())
+            .filter(|n| n.status == NodeStatus::Active)
+            .collect()
     }
 
     /// Check if a permission context grants access to a node.

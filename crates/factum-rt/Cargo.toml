@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Factum runtime: in-memory store, indexing, query, arbitration"
 
+[features]
+default = []
+rocksdb = ["dep:rocksdb", "dep:bincode", "dep:tempfile"]
+
 [dependencies]
 factum-core.workspace = true
 serde.workspace = true
@@ -14,6 +18,9 @@ smol_str.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 ahash.workspace = true
+rocksdb = { version = "0.22", optional = true }
+bincode = { version = "1", optional = true }
+tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 proptest = "1"

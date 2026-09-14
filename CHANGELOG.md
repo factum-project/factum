@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **RocksDB persistence backend** (feature `rocksdb`): `RocksDBBackend` implements `StorageBackend` trait with 5 column families (nodes + by_entity + by_pred + by_src + by_perm). Uses bincode for Node serialization, RocksDB's native WAL for durability, and `WriteBatch` for atomic multi-key writes. `FactumStore::with_rocksdb(path, registry)` constructor opens or creates a persistent database. `deps_rev` and `by_validity` indices are rebuilt in-memory on startup from persisted node data.
+- **StorageBackend trait abstraction**: `FactumStore` now holds `Arc<dyn StorageBackend>` instead of direct HashMap fields. Two implementations: `InMemoryBackend` (default, identical to v0.1 behavior) and `RocksDBBackend` (feature-gated). Zero breaking change to public API — all existing methods and constructors work unchanged.
+- **Serde derives on all core types**: `Node`, `Predicate`, `Term`, `Literal`, `Provenance`, `Validity`, `NodeId`, `EntityId`, `DocId`, and all other core types now derive `serde::Serialize` and `serde::Deserialize` (or have manual impls for `Arc<str>` newtypes). Enables bincode serialization for RocksDB persistence.
 - **preferred_form negotiation** (spec/compact-form.md §8): `McpHandler` reads `capabilities.factum.preferred_form` during initialize. When `"canonical"`, `factum_query` results return as S-expression text (−62% tokens vs JSON for LLM context). When absent or `"compact"`, defaults to compact JSON. Invalid values safely fall back to compact.
 - **Store ↔ SubscriptionManager integration**: `FactumStore` now holds a `SubscriptionManager` instance. `insert()`, `insert_batch()`, and `retract()` call `notify_insert()` / `notify_retract()` respectively. Public `subscriptions()` accessor for creating subscriptions.
 - **Store ↔ VerifierRegistry integration**: `FactumStore` now holds an optional `VerifierRegistry`. `enable_verifiers()` / `set_verifiers()` / `disable_verifiers()` methods. `insert()` and `insert_batch()` verify before storage when enabled. Off by default — opt-in, no breaking change. Batch verification is atomic: one bad node rejects the entire batch.
@@ -110,7 +113,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All tests passing across all crates
 
 ### Known Limitations
-- Storage is in-memory only (RocksDB backend is planned)
+- Storage defaults to in-memory; RocksDB persistence available via `--features rocksdb` (no MVCC yet)
 - Morpheme vocabulary is 24 seeds (target: 200-500)
 - MCP transport: stdio verified, HTTP not started
 - No real MCP host integration testing (Claude Code, Cursor)

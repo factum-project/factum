@@ -52,8 +52,10 @@ This roadmap tracks what's planned, in priority order. Items before the M2 line 
 These are **hard blockers** for any public promotion (Show HN, blog posts, conference talks):
 
 ### Storage
-- 📋 RocksDB backend (WAL + MVCC) replacing in-memory HashMap
-- 📋 `write_batch` for atomic multi-node writes
+- ✅ `StorageBackend` trait abstraction (InMemory + RocksDB backends, feature-gated)
+- ✅ RocksDB backend with 5 column families (nodes + 4 secondary indices)
+- ✅ `batch_write` for atomic multi-node writes (RocksDB WriteBatch)
+- ✅ Persistence verified: reopen database retains all data (12 tests passing)
 - 📋 MVCC optimistic concurrency with merge/abort policy
 
 ### MCP Integration

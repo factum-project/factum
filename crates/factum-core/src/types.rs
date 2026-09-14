@@ -44,6 +44,19 @@ impl std::str::FromStr for NodeId {
     }
 }
 
+impl serde::Serialize for NodeId {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for NodeId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Ok(Self::new(s))
+    }
+}
+
 /// Typed entity identifier (e.g., "ACME-CORP", "ORG:000123").
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EntityId(pub Arc<str>);
@@ -63,6 +76,19 @@ impl std::fmt::Display for EntityId {
     }
 }
 
+impl serde::Serialize for EntityId {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for EntityId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Ok(Self::new(s))
+    }
+}
+
 /// Document identifier for provenance tracking.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DocId(pub Arc<str>);
@@ -73,8 +99,21 @@ impl DocId {
     }
 }
 
+impl serde::Serialize for DocId {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DocId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Ok(Self::new(s))
+    }
+}
+
 /// Byte span within a document [start, end).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Span {
     pub start: u32,
     pub end: u32,
@@ -82,24 +121,24 @@ pub struct Span {
 
 /// Model reference for Extracted provenance.
 /// Extracted nodes MUST carry model + version — this is non-optional.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ModelRef {
     pub name: SmolStr,
     pub version: SmolStr,
 }
 
 /// Principal (who asserted or extracted this knowledge).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Principal(pub SmolStr);
 
 /// Rule identifier for Derived provenance.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct RuleId(pub SmolStr);
 
 // ─── Validity ───────────────────────────────────────────────
 
 /// Temporal validity of a node.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Validity {
     /// Always valid.
     #[default]
@@ -136,7 +175,7 @@ impl Validity {
 /// This is the foundation of Factum's trust model. Every node must declare
 /// where its knowledge came from. `Extracted` nodes MUST carry a model
 /// reference — serialization is illegal without it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Provenance {
     /// Verbatim quote from a document. The original text can be precisely
     /// reconstructed using (doc, span).
@@ -179,7 +218,7 @@ impl Default for Provenance {
 // ─── Confidence & Authority ─────────────────────────────────
 
 /// Confidence score in [0, 1]. Stored as f32 but validated on construction.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct Confidence(pub f32);
 
 impl Confidence {
@@ -203,7 +242,7 @@ impl Default for Confidence {
 }
 
 /// Authority weight in [0, 1]. Reflects the trustworthiness of the source.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct Authority(pub f32);
 
 impl Authority {
@@ -235,7 +274,7 @@ impl Default for Authority {
 /// This completely avoids floating-point errors. Using f64 for
 /// money/ratios would destroy the determinism required by verification
 /// hooks (see §3.4 of the spec). This is non-negotiable.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Literal {
     /// Decimal number: mantissa × 10^(-scale).
     /// Max precision: 38 digits (i128 can hold ~38 decimal digits).
@@ -332,14 +371,14 @@ impl Literal {
 /// Global morpheme registry index.
 /// Morphemes are content predicates like "shareholder-major".
 /// The registry maps MorphemeId → MorphemeDef (name, kind, signature).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MorphemeId(pub u32);
 
 // ─── Terms ──────────────────────────────────────────────────
 
 /// A term in a predicate. Can be a variable, entity, literal,
 /// nested predicate, or list.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Term {
     /// Variable: ?p, ?x
     Var(SmolStr),
@@ -373,7 +412,7 @@ impl Term {
 /// - head: MorphemeId for "shareholder-major"
 /// - args: [Ent("ACME-CORP"), Var("?p")]
 /// - named: [("valid", List([Var("now")]))]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Predicate {
     /// The morpheme (predicate head). Can be either an ID (resolved)
     /// or a name (unresolved, resolved during parsing).
@@ -386,7 +425,7 @@ pub struct Predicate {
 
 /// A predicate head can be either a resolved MorphemeId or an
 /// unresolved name string (before registry lookup).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PredicateHead {
     /// Resolved to a morpheme ID from the registry.
     Id(MorphemeId),
@@ -437,7 +476,7 @@ impl From<&str> for PredicateHead {
 
 /// Permission tag for access control.
 /// Uses a bitmask for efficient intersection at the index layer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct PermissionTag(pub u32);
 
 impl PermissionTag {
@@ -460,7 +499,7 @@ impl PermissionTag {
 // ─── Node Status ────────────────────────────────────────────
 
 /// Lifecycle status of a node.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub enum NodeStatus {
     /// Node is active and valid.
     #[default]
@@ -488,7 +527,7 @@ pub enum NodeStatus {
 /// Plus `deps` — the derivation dependency chain for invalidation.
 /// When an upstream node is retracted, all `Derived` nodes transitively
 /// depending on it are cascade-invalidated.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Node {
     pub id: NodeId,
     pub predicate: Predicate,
