@@ -173,7 +173,7 @@ impl FactumStore {
         &self.subscriptions
     }
 
-    /// Enable built-in verifiers (SchemaVerifier + ArithmeticVerifier).
+    /// Enable built-in verifiers (SchemaVerifier + DecimalRangeVerifier).
     /// Once enabled, all subsequent inserts will be verified before storage.
     pub fn enable_verifiers(&self) {
         let reg = VerifierRegistry::with_builtins(self.registry.clone());

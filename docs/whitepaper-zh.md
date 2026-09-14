@@ -693,7 +693,7 @@ pub enum Verdict {
 | 验证器 | 功能 | 状态 |
 |--------|------|------|
 | **SchemaVerifier** | 词素签名类型检查（参数数量验证） | ✅ 已实现 |
-| **ArithmeticVerifier** | 数值一致性检查（标度 ≤ 38，位数 ≤ 38） | ✅ 已实现 |
+| **DecimalRangeVerifier** | 十进制范围检查（标度 ≤ 38，位数 ≤ 38） | ✅ 已实现 |
 | SolverVerifier | Z3 约束满足求解 | 📋 路线图 |
 | LeanVerifier | Lean 证明验证 | 📋 路线图 |
 

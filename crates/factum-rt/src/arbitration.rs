@@ -26,6 +26,8 @@ pub enum ConflictPolicy {
     /// Only return if all sources agree (same predicate).
     Unanimous,
     /// User-provided arbitration function (not implementable in v0.1 const context).
+    /// When selected, all multi-node groups are marked Ambiguous — we refuse to
+    /// answer rather than silently guess.
     Custom,
 }
 
@@ -67,14 +69,32 @@ pub fn arbitrate(
 
         match policy {
             ConflictPolicy::LatestWins => {
-                // Sort by authority desc, then by validity start desc
+                // Sort by authority desc, then by validity start desc (most recent wins).
+                // Forever is treated as the least recent (earliest) validity,
+                // so a Window node always wins over a Forever node at the same authority.
                 let winner = group.iter()
                     .max_by(|a, b| {
                         a.node.authority.0
                             .partial_cmp(&b.node.authority.0)
                             .unwrap_or(std::cmp::Ordering::Equal)
+                            .then(validity_recency_cmp(&a.node.validity, &b.node.validity))
                     });
                 if let Some(w) = winner {
+                    // Check for a tie on both authority and validity — if multiple
+                    // nodes have the same authority AND same validity start, we
+                    // cannot pick one and must mark ambiguous.
+                    let w_auth = w.node.authority.0;
+                    let w_validity = &w.node.validity;
+                    let tied: Vec<_> = group.iter()
+                        .filter(|r| {
+                            (r.node.authority.0 - w_auth).abs() < 0.001
+                            && validity_recency_cmp(&r.node.validity, w_validity)
+                                == std::cmp::Ordering::Equal
+                        })
+                        .collect();
+                    if tied.len() > 1 {
+                        ambiguous = true;
+                    }
                     results.push(w.clone());
                 }
             }
@@ -105,8 +125,11 @@ pub fn arbitrate(
                 }
             }
             ConflictPolicy::Custom => {
-                // Not implementable in v0.1
-                results.push(group.into_iter().next().unwrap());
+                // Custom arbitration is not implementable in v0.1 (requires a
+                // user-provided function, which cannot be stored in a const enum).
+                // We refuse to answer rather than silently pick one — this is a
+                // core Factum principle.
+                ambiguous = true;
             }
         }
     }
@@ -143,15 +166,51 @@ fn term_key(term: &Term) -> String {
     }
 }
 
+/// Compare two validities by recency (most recent wins).
+///
+/// Returns `Greater` if `a` is more recent than `b`.
+/// `Forever` is treated as the least recent (earliest possible start),
+/// so any `Window` with a finite `from` is more recent than `Forever`.
+/// When both are `Window`, compares by `from` timestamp.
+fn validity_recency_cmp(a: &Validity, b: &Validity) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a, b) {
+        (Validity::Forever, Validity::Forever) => Ordering::Equal,
+        (Validity::Forever, Validity::Window { .. }) => Ordering::Less,
+        (Validity::Window { .. }, Validity::Forever) => Ordering::Greater,
+        (Validity::Window { from: a_from, .. }, Validity::Window { from: b_from, .. }) => {
+            a_from.cmp(b_from)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::query::QueryResult;
     use std::sync::Arc;
+    use chrono::{TimeZone, Utc};
+    use factum_core::types::Validity;
 
     fn make_result(id: &str, auth: f32, pred: Predicate) -> QueryResult {
         QueryResult {
             node: Arc::new(Node::new(id, pred).with_authority(Authority(auth))),
+            bindings: vec![],
+        }
+    }
+
+    fn make_result_with_validity(
+        id: &str,
+        auth: f32,
+        pred: Predicate,
+        validity: Validity,
+    ) -> QueryResult {
+        QueryResult {
+            node: Arc::new(
+                Node::new(id, pred)
+                    .with_authority(Authority(auth))
+                    .with_validity(validity),
+            ),
             bindings: vec![],
         }
     }
@@ -168,6 +227,96 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert!(!ambiguous);
         assert_eq!(results[0].node.id.as_str(), "n002"); // highest authority
+    }
+
+    // ── Bug 1 regression: LatestWins must tiebreak by validity start ──
+
+    #[test]
+    fn test_latest_wins_validity_tiebreak() {
+        // Two nodes with same authority, different validity starts.
+        // The one with the more recent validity start should win.
+        let pred = Predicate::new("p").with_args(vec![Term::ent("X")]);
+        let older = make_result_with_validity(
+            "n001", 0.9, pred.clone(),
+            Validity::Window {
+                from: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                until: None,
+            },
+        );
+        let newer = make_result_with_validity(
+            "n002", 0.9, pred.clone(),
+            Validity::Window {
+                from: Utc.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap(),
+                until: None,
+            },
+        );
+
+        let (results, ambiguous) = arbitrate(vec![older, newer], &ConflictPolicy::LatestWins);
+        assert!(!ambiguous);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].node.id.as_str(), "n002"); // more recent validity wins
+    }
+
+    #[test]
+    fn test_latest_wins_window_beats_forever() {
+        // Same authority: Window (finite start) should beat Forever.
+        let pred = Predicate::new("p").with_args(vec![Term::ent("X")]);
+        let forever = make_result("n001", 0.9, pred.clone());
+        let window = make_result_with_validity(
+            "n002", 0.9, pred.clone(),
+            Validity::Window {
+                from: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+                until: None,
+            },
+        );
+
+        let (results, ambiguous) = arbitrate(vec![forever, window], &ConflictPolicy::LatestWins);
+        assert!(!ambiguous);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].node.id.as_str(), "n002"); // Window beats Forever
+    }
+
+    #[test]
+    fn test_latest_wins_tiebreak_tie_is_ambiguous() {
+        // Same authority AND same validity start → cannot pick, must be ambiguous.
+        let pred = Predicate::new("p").with_args(vec![Term::ent("X")]);
+        let v = Validity::Window {
+            from: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            until: None,
+        };
+        let a = make_result_with_validity("n001", 0.9, pred.clone(), v);
+        let b = make_result_with_validity("n002", 0.9, pred.clone(), v);
+
+        let (results, ambiguous) = arbitrate(vec![a, b], &ConflictPolicy::LatestWins);
+        assert!(ambiguous, "same authority + same validity must be ambiguous");
+        // Results still contains one entry (the winner), but ambiguous flag is set
+        assert_eq!(results.len(), 1);
+    }
+
+    // ── Bug 2 regression: Custom must mark Ambiguous, not silently guess ──
+
+    #[test]
+    fn test_custom_policy_marks_ambiguous() {
+        let pred = Predicate::new("p").with_args(vec![Term::ent("X")]);
+        let matches = vec![
+            make_result("n001", 0.5, pred.clone()),
+            make_result("n002", 0.9, pred.clone()),
+        ];
+
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Custom);
+        assert!(ambiguous, "Custom policy must mark ambiguous, not silently guess");
+        assert!(results.is_empty(), "Custom policy must not push any result");
+    }
+
+    #[test]
+    fn test_custom_policy_single_result_still_resolved() {
+        // Single-node group should still pass through (no conflict to arbitrate).
+        let pred = Predicate::new("p").with_args(vec![Term::ent("X")]);
+        let matches = vec![make_result("n001", 0.5, pred.clone())];
+
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Custom);
+        assert!(!ambiguous);
+        assert_eq!(results.len(), 1);
     }
 
     #[test]

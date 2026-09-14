@@ -1,12 +1,12 @@
 //! Verifier framework — formal validation of node correctness.
 //!
 //! ## Built-in Verifiers (planned)
-//! - `ArithmeticVerifier`: Check literal arithmetic consistency
+//! - `DecimalRangeVerifier`: Check decimal literal range (scale and digit count)
 //! - `SolverVerifier`: Call Z3 for constraint satisfaction (z3.rs)
 //! - `LeanVerifier`: Spawn Lean process to verify proof assertions
 //! - `SchemaVerifier`: Morpheme signature type checking
 //!
-//! In v0.1, we implement `ArithmeticVerifier` and `SchemaVerifier`.
+//! In v0.1, we implement `DecimalRangeVerifier` and `SchemaVerifier`.
 //! Z3 and Lean integration are deferred to later milestones.
 
 use std::sync::Arc;
@@ -48,7 +48,7 @@ impl VerifierRegistry {
     pub fn with_builtins(registry: Arc<MorphemeRegistry>) -> Self {
         let mut reg = Self::new();
         reg.add(Box::new(SchemaVerifier { registry }));
-        reg.add(Box::new(ArithmeticVerifier));
+        reg.add(Box::new(DecimalRangeVerifier));
         reg
     }
 
@@ -124,14 +124,21 @@ impl Verifier for SchemaVerifier {
     }
 }
 
-/// Arithmetic verifier — checks numeric consistency.
+/// Decimal range verifier — checks that Decimal literals are within
+/// representable bounds.
 ///
 /// In v0.1, this checks:
-/// - Decimal values are within valid range
-/// - No overflow in stored values
-pub struct ArithmeticVerifier;
+/// - Decimal scale ≤ 38 (matches the i128-backed fixed-point representation)
+/// - Decimal significant digits ≤ 38
+///
+/// **Note**: This verifier does NOT perform arithmetic consistency checks
+/// (e.g., "revenue − costs = profit"). It only validates that individual
+/// Decimal values are within the representable range of the fixed-point
+/// type used by Factum. Arithmetic consistency verification is planned
+/// for a future milestone (see `SolverVerifier` / `LeanVerifier`).
+pub struct DecimalRangeVerifier;
 
-impl Verifier for ArithmeticVerifier {
+impl Verifier for DecimalRangeVerifier {
     fn can_verify(&self, node: &Node) -> bool {
         // Can verify if any arg is a Decimal literal
         node.predicate.args.iter().any(|t| matches!(t, Term::Lit(Literal::Dec(_, _))))
@@ -197,8 +204,8 @@ mod tests {
     }
 
     #[test]
-    fn test_arithmetic_verifier() {
-        let verifier = ArithmeticVerifier;
+    fn test_decimal_range_verifier() {
+        let verifier = DecimalRangeVerifier;
 
         // Valid decimal
         let node = Node::new("n001",

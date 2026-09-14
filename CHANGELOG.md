@@ -99,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **factum-rt**: Query engine with variable binding and pattern matching
 - **factum-rt**: Conflict arbitration (LatestWins, HighestAuthority, Unanimous) with Ambiguous refusal
 - **factum-rt**: Index-level permission filtering (no post-query filtering — prevents aggregate leakage)
-- **factum-rt**: Verifier framework with SchemaVerifier (morpheme signature checking) and ArithmeticVerifier (decimal range checking)
+- **factum-rt**: Verifier framework with SchemaVerifier (morpheme signature checking) and DecimalRangeVerifier (decimal range checking)
 - **factum-rt**: Subscription manager with pattern-matched event notification
 - **factum-rt**: Cascade retraction propagation via reverse dependency graph
 - **factum-rt**: WAL (write-ahead log) for event replay
