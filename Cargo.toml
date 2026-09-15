@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT"
 authors = ["Factum Project"]
@@ -17,8 +17,8 @@ description = "Auditable memory for AI agents"
 
 [workspace.dependencies]
 # Internal (path + version for crates.io publishing)
-factum-core = { path = "crates/factum-core", version = "0.1.1" }
-factum-rt = { path = "crates/factum-rt", version = "0.1.1" }
+factum-core = { path = "crates/factum-core", version = "0.1.2" }
+factum-rt = { path = "crates/factum-rt", version = "0.1.2" }
 
 # External
 serde = { version = "1", features = ["derive"] }

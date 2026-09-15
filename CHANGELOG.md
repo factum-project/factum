@@ -5,6 +5,19 @@ All notable changes to Factum will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] — 2026-09-15
+
+### Fixed
+- **Lexer multi-dot number silent corruption**: `0.1.1`, `192.168.1.1` and similar multi-dot numbers were silently split into multiple tokens (`0.1` + `@.1`), corrupting the knowledge graph without any error. Now produces a clear parse error guiding users to use string quotes (e.g., `"0.1.1"`). Discovered during first real-world self-use of Factum as agent memory.
+
+### Added
+- **`factum_lookup` MCP tool**: New tool that looks up all knowledge about a specific entity using the `by_entity` index. Takes an entity name (with or without `@` prefix) and optional `min_confidence` filter. Returns all active public nodes where the entity appears in predicate arguments. This is the #1 agent memory use case — "what do I know about X?" — that previously required knowing the exact predicate.
+- **`factum_insert_batch` MCP tool**: New tool for atomic multi-node insertion. Takes an array of node strings (max 100). If any node fails parsing, the entire batch is rejected (no partial insert). Uses `FactumStore::insert_batch()` which also checks for duplicates and verifier failures atomically. 10x more efficient than calling `factum_insert` repeatedly for initial knowledge base loading.
+- **String literal guidelines in authoring guide**: New section in `docs/authoring-for-llms.md` documenting when values must be wrapped in double quotes — version numbers (`0.1.1`), URLs (`https://...`), IP addresses, file paths with colons, email addresses, and free-text descriptions. Discovered during first real-world self-use of Factum as agent memory.
+
+### Changed
+- Version: `0.1.1` → `0.1.2` (0.1.1 was already published to crates.io before these improvements were made)
+
 ## [0.1.1] — 2026-09-15
 
 ### Changed
