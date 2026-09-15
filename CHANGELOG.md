@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **SchemaVerifier arity check broken for named/optional params**: The verifier only counted `node.predicate.args.len()` (positional args), completely ignoring `node.predicate.named`. Signatures with optional params (`?` suffix) or named params would fail validation when used as documented. Now counts `args.len() + named.len()` and properly handles `?` optional suffix in signature strings. Validation rule: `required_params <= (args + named) <= total_params`. Added 4 regression tests: named args counted, optional param omitted, optional param provided, too many args.
+- **Arbitration API behavior undocumented**: `HighestAuthority` returns a candidate on tie (with `ambiguous = true`), while `Unanimous` returns nothing on disagreement (only `ambiguous = true`). This asymmetry is intentional but was not documented. Added module-level doc table explaining the behavior difference, and strengthened two tests to assert `results.len()` (non-empty for HighestAuthority, empty for Unanimous).
+- **Upsert non-atomic window undocumented**: `factum_upsert` performs insert and retract as separate operations. If insert succeeds but retract fails, both nodes exist (returned as `action: "partial"`). This is not data loss, but was not documented. Added doc comment explaining the non-atomic nature and pointing to future WriteBatch API for true atomicity.
+
 ### Added
 - **`factum_assert` MCP tool**: New tool that accepts only a predicate S-expression (e.g. `(version @FACTUM "0.1.3")`), auto-generates a content-based node ID (`auto-` + 12 hex chars of hash), and assigns default provenance (`Asserted { by: "system" }`). Same content → same ID → second insert fails with `AlreadyExists` (prevents accidental duplicates). Optional `by` and `confidence` parameters for customization. Reduces typical insert from 60+ chars to ~30 chars. Solves dogfooding issues #8 (verbose syntax) and #10 (node ID collision risk).
 - **`pub fn canonical_predicate()`**: Previously private `canonical_predicate` function in `serialize.rs` is now public, enabling external callers to serialize predicates independently.
@@ -24,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - MCP tool count: 7 → 8
 - Handler unit test count: 14 → 42
-- Total test count: 115 → 143
+- Total test count: 115 → 147
 
 ### Added
 - **`factum_upsert` MCP tool**: New tool for update-or-insert. Finds active nodes matching entity + predicate, then: 0 matches → plain insert; 1 match → insert new + retract old; 2+ matches → returns Ambiguous (refuses to guess). Insert-first ordering ensures no data loss on partial failure. Reduces 3-step update (query → retract → insert) to a single call.

@@ -9,6 +9,30 @@
 //! ## Key Design Decision
 //! When arbitration cannot uniquely resolve, return `Ambiguous`.
 //! **We refuse to answer rather than guess.** This is a core Factum principle.
+//!
+//! ## Ambiguity Behavior by Policy
+//!
+//! When a conflict cannot be uniquely resolved, each policy has a **deliberately
+//! different** behavior regarding whether a candidate is still returned:
+//!
+//! | Policy            | Ambiguous flag | Result returned?  | Rationale                        |
+//! |-------------------|----------------|-------------------|----------------------------------|
+//! | `LatestWins`      | `true`         | Yes (best guess)  | Authority+validity tie, pick one |
+//! | `HighestAuthority`| `true`         | Yes (first winner)| Authority tie, return a candidate|
+//! | `Unanimous`       | `true`         | No (empty)        | Sources disagree, no answer      |
+//! | `Custom`          | `true`         | No (empty)        | No function, refuse              |
+//!
+//! **`LatestWins` and `HighestAuthority`** return a candidate even on ambiguity.
+//! The caller receives `results.len() > 0` with `ambiguous = true`, meaning
+//! "here is the best candidate, but it is not authoritative — use with caution."
+//!
+//! **`Unanimous` and `Custom`** return nothing on ambiguity. The caller receives
+//! `results.is_empty()` with `ambiguous = true`, meaning "we could not agree,
+//! so we refuse to provide any answer."
+//!
+//! This asymmetry is intentional: authority-based policies always have a
+//! "best" candidate to offer (even if tied), while agreement-based policies
+//! have no meaningful candidate when consensus fails.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -326,8 +350,11 @@ mod tests {
             make_result("n002", 0.9, Predicate::new("p").with_args(vec![Term::ent("X")])),
         ];
 
-        let (_results, ambiguous) = arbitrate(matches, &ConflictPolicy::HighestAuthority);
+        // HighestAuthority on tie: returns a candidate (winners[0]) AND marks ambiguous.
+        // This is deliberately different from Unanimous (which returns nothing).
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::HighestAuthority);
         assert!(ambiguous);
+        assert_eq!(results.len(), 1, "HighestAuthority must still return a candidate on tie");
     }
 
     #[test]
@@ -353,7 +380,10 @@ mod tests {
                 Predicate::new("instance-of").with_args(vec![Term::ent("X"), Term::ent("person")])),
         ];
 
-        let (_results, ambiguous) = arbitrate(matches, &ConflictPolicy::Unanimous);
+        // Unanimous on disagreement: marks ambiguous AND returns no result.
+        // This is deliberately different from HighestAuthority (which returns a candidate).
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Unanimous);
         assert!(ambiguous);
+        assert!(results.is_empty(), "Unanimous must not return any result on disagreement");
     }
 }

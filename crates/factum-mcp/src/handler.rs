@@ -462,6 +462,12 @@ impl McpHandler {
     /// - 0 matches: plain insert (no retract needed)
     /// - 1 match: insert new node, then retract old node
     /// - 2+ matches: return Ambiguous (refuses to guess)
+    ///
+    /// **Non-atomic**: insert and retract are separate operations. If insert
+    /// succeeds but retract fails, both nodes will exist (returned as
+    /// `action: "partial"`). This is not data loss — the user has two versions
+    /// and can manually retract the old one. True atomic insert+retract would
+    /// require a combined WriteBatch API in FactumStore (future work).
     fn tool_upsert(&self, req: &JsonRpcRequest, args: &serde_json::Value) -> JsonRpcResponse {
         let params: FactumUpsertParams = match serde_json::from_value(args.clone()) {
             Ok(p) => p,

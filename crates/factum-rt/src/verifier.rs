@@ -100,18 +100,49 @@ impl Verifier for SchemaVerifier {
             None => return Verdict::Fail("unknown morpheme".into()),
         };
 
-        // Basic arity check (simplified — full type checking is future work)
-        // Parse signature to count expected params
+        // Arity check: parse signature to count expected params, then compare
+        // against the sum of positional args + named args in the node.
+        //
+        // Signature format: "name:Type, name:Type?, ... -> ReturnType"
+        // - Required params have no `?` suffix
+        // - Optional params end with `?`
+        // - Params can be provided as positional OR named in the node
+        //
+        // Validation rules:
+        //   total_provided = args.len() + named.len()
+        //   required <= total_provided <= total_params
+        //   total_provided >= required (must provide all required params)
         let sig = &def.signature.raw;
         if sig.contains("->") {
             let params_part = sig.split("->").next().unwrap_or("");
-            let param_count = params_part.split(',').filter(|s| !s.trim().is_empty()).count();
+            let params: Vec<&str> = params_part
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
 
-            if param_count > 0 && node.predicate.args.len() != param_count {
-                return Verdict::Fail(format!(
-                    "arity mismatch: expected {} args, got {}",
-                    param_count, node.predicate.args.len()
-                ));
+            if !params.is_empty() {
+                let total_params = params.len();
+                let required_params = params
+                    .iter()
+                    .filter(|p| !p.ends_with('?'))
+                    .count();
+
+                let provided = node.predicate.args.len() + node.predicate.named.len();
+
+                if provided < required_params {
+                    return Verdict::Fail(format!(
+                        "arity mismatch: expected at least {} args ({} required, {} optional), got {}",
+                        required_params, required_params, total_params - required_params, provided
+                    ));
+                }
+
+                if provided > total_params {
+                    return Verdict::Fail(format!(
+                        "arity mismatch: expected at most {} args, got {}",
+                        total_params, provided
+                    ));
+                }
             }
         }
 
@@ -174,7 +205,7 @@ mod tests {
         let registry = Arc::new(MorphemeRegistry::with_seeds());
         let verifier = SchemaVerifier { registry };
 
-        // shareholder-major expects 4 args: org, holder, since, stake
+        // shareholder-major expects 4 args: org, holder, since, stake (all required)
         let node = Node::new("n001",
             Predicate::new("shareholder-major")
                 .with_args(vec![
@@ -201,6 +232,91 @@ mod tests {
 
         let verdict = verifier.verify(&node);
         assert_eq!(verdict, Verdict::Pass);
+    }
+
+    #[test]
+    fn test_schema_verifier_named_args_counted() {
+        // shareholder-major has 4 params. If user provides 3 positional + 1 named,
+        // it should pass. Previously it would fail because named args were ignored.
+        let registry = Arc::new(MorphemeRegistry::with_seeds());
+        let verifier = SchemaVerifier { registry };
+
+        let node = Node::new("n001",
+            Predicate::new("shareholder-major")
+                .with_args(vec![
+                    Term::ent("ACME"),
+                    Term::ent("HOLDER-1"),
+                    Term::lit(Literal::dec_from_str("0.5").unwrap()),
+                ])
+                .with_named("since", Term::lit(Literal::Date(
+                    chrono::NaiveDate::from_ymd_opt(2023, 1, 1).unwrap()
+                ))));
+
+        let verdict = verifier.verify(&node);
+        assert_eq!(verdict, Verdict::Pass);
+    }
+
+    #[test]
+    fn test_schema_verifier_optional_param_omitted() {
+        // acquired-by has signature: target, acquirer, date, amount:Dec?
+        // Omitting the optional `amount` should pass (3 args, 3 required, 1 optional)
+        let registry = Arc::new(MorphemeRegistry::with_seeds());
+        let verifier = SchemaVerifier { registry };
+
+        let node = Node::new("n001",
+            Predicate::new("acquired-by")
+                .with_args(vec![
+                    Term::ent("ACME"),
+                    Term::ent("BIG-CORP"),
+                    Term::lit(Literal::Date(
+                        chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+                    )),
+                ]));
+
+        let verdict = verifier.verify(&node);
+        assert_eq!(verdict, Verdict::Pass);
+    }
+
+    #[test]
+    fn test_schema_verifier_optional_param_provided() {
+        // acquired-by with all 4 params (including optional amount) should pass
+        let registry = Arc::new(MorphemeRegistry::with_seeds());
+        let verifier = SchemaVerifier { registry };
+
+        let node = Node::new("n001",
+            Predicate::new("acquired-by")
+                .with_args(vec![
+                    Term::ent("ACME"),
+                    Term::ent("BIG-CORP"),
+                    Term::lit(Literal::Date(
+                        chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+                    )),
+                    Term::lit(Literal::dec_from_str("1000000").unwrap()),
+                ]));
+
+        let verdict = verifier.verify(&node);
+        assert_eq!(verdict, Verdict::Pass);
+    }
+
+    #[test]
+    fn test_schema_verifier_too_many_args() {
+        // instance-of expects 2 args; providing 3 should fail
+        let registry = Arc::new(MorphemeRegistry::with_seeds());
+        let verifier = SchemaVerifier { registry };
+
+        let node = Node::new("n001",
+            Predicate::new("instance-of")
+                .with_args(vec![
+                    Term::ent("X"),
+                    Term::ent("organization"),
+                    Term::ent("extra"),
+                ]));
+
+        let verdict = verifier.verify(&node);
+        match verdict {
+            Verdict::Fail(msg) => assert!(msg.contains("arity")),
+            _ => panic!("expected failure for too many args"),
+        }
     }
 
     #[test]
