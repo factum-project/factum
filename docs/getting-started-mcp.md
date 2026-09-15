@@ -54,6 +54,8 @@ that `factum` is connected. The available tools are:
 - `factum_lookup`: look up all knowledge about a specific entity.
 - `factum_insert`: insert a single knowledge node.
 - `factum_insert_batch`: insert multiple nodes atomically (all-or-nothing).
+- `factum_upsert`: update or insert a node (retract old matching node + insert new).
+- `factum_search`: search nodes by keyword, list predicates, or get stats.
 - `factum_retract`: retract a node and its derived dependents.
 
 To try the server without registering it permanently, save the following as

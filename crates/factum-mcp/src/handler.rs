@@ -14,6 +14,14 @@ use factum_rt::permission::PermissionContext;
 use crate::protocol::*;
 use crate::tools::*;
 
+/// Extract predicate head as string for display/comparison.
+fn predicate_head_str(head: &PredicateHead) -> &str {
+    match head {
+        PredicateHead::Name(name) => name.as_str(),
+        PredicateHead::Id(_) => "<morpheme-id>",
+    }
+}
+
 /// The form in which query results are serialized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PreferredForm {
@@ -163,6 +171,8 @@ impl McpHandler {
             "factum_lookup" => self.tool_lookup(req, &arguments),
             "factum_insert" => self.tool_insert(req, &arguments),
             "factum_insert_batch" => self.tool_insert_batch(req, &arguments),
+            "factum_upsert" => self.tool_upsert(req, &arguments),
+            "factum_search" => self.tool_search(req, &arguments),
             "factum_retract" => self.tool_retract(req, &arguments),
             _ => JsonRpcResponse::error(req.id.clone(),
                 JsonRpcError::invalid_params(format!("unknown tool: {}", tool_name))),
@@ -409,6 +419,234 @@ impl McpHandler {
         }
     }
 
+    /// Execute factum_upsert tool — update or insert a node.
+    ///
+    /// Finds active nodes matching entity + predicate, then:
+    /// - 0 matches: plain insert (no retract needed)
+    /// - 1 match: insert new node, then retract old node
+    /// - 2+ matches: return Ambiguous (refuses to guess)
+    fn tool_upsert(&self, req: &JsonRpcRequest, args: &serde_json::Value) -> JsonRpcResponse {
+        let params: FactumUpsertParams = match serde_json::from_value(args.clone()) {
+            Ok(p) => p,
+            Err(e) => return JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params(e.to_string())),
+        };
+
+        // Parse the new node first — fail early if invalid
+        let nodes = match Parser::parse(&params.node) {
+            Ok(n) => n,
+            Err(e) => return JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params(format!("Node parse error: {}", e))),
+        };
+        if nodes.is_empty() {
+            return JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params("no nodes parsed"));
+        }
+        let new_node = nodes.into_iter().next().unwrap();
+
+        // Find existing active nodes matching entity + predicate
+        let entity_name = params.entity.strip_prefix('@').unwrap_or(&params.entity);
+        let entity = EntityId::new(entity_name);
+        let ctx = PermissionContext::public();
+
+        let matching: Vec<_> = self.store.lookup_by_entity(&entity)
+            .into_iter()
+            .filter(|n| {
+                n.status == NodeStatus::Active
+                    && self.store.check_permission(n, &ctx)
+                    && predicate_head_str(&n.predicate.head) == params.predicate
+            })
+            .collect();
+
+        match matching.len() {
+            0 => {
+                // No existing node — plain insert
+                match self.store.insert(new_node) {
+                    Ok(()) => {
+                        let json = serde_json::json!({
+                            "action": "inserted",
+                            "retracted": [],
+                            "status": "no existing node found, inserted as new"
+                        });
+                        let tool_result = ToolResult::structured(json);
+                        JsonRpcResponse::success(
+                            req.id.clone(),
+                            serde_json::to_value(tool_result).unwrap(),
+                        )
+                    }
+                    Err(e) => JsonRpcResponse::error(req.id.clone(),
+                        JsonRpcError::internal(e.to_string())),
+                }
+            }
+            1 => {
+                // Exactly one match — insert new, then retract old
+                let old_node_id = matching[0].id.clone();
+
+                // Insert new node first (if insert fails, old node is untouched)
+                match self.store.insert(new_node) {
+                    Ok(()) => {
+                        // Now retract the old node
+                        match self.store.retract(&old_node_id) {
+                            Ok(retracted) => {
+                                let json = serde_json::json!({
+                                    "action": "updated",
+                                    "retracted": retracted.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                                    "retracted_count": retracted.len(),
+                                    "status": "old node retracted, new node inserted"
+                                });
+                                let tool_result = ToolResult::structured(json);
+                                JsonRpcResponse::success(
+                                    req.id.clone(),
+                                    serde_json::to_value(tool_result).unwrap(),
+                                )
+                            }
+                            Err(e) => {
+                                // Insert succeeded but retract failed — both nodes exist
+                                // This is not data loss, but the user has two versions
+                                let json = serde_json::json!({
+                                    "action": "partial",
+                                    "warning": "new node inserted but old node retraction failed",
+                                    "error": e.to_string(),
+                                    "old_node_id": old_node_id.to_string(),
+                                });
+                                let tool_result = ToolResult::structured(json);
+                                JsonRpcResponse::success(
+                                    req.id.clone(),
+                                    serde_json::to_value(tool_result).unwrap(),
+                                )
+                            }
+                        }
+                    }
+                    Err(e) => JsonRpcResponse::error(req.id.clone(),
+                        JsonRpcError::internal(format!("Insert failed: {} (old node untouched)", e))),
+                }
+            }
+            _ => {
+                // Multiple matches — Ambiguous, refuse to guess
+                let node_ids: Vec<_> = matching.iter()
+                    .map(|n| n.id.to_string())
+                    .collect();
+                let json = serde_json::json!({
+                    "action": "ambiguous",
+                    "matching_nodes": node_ids,
+                    "count": matching.len(),
+                    "status": "multiple matching nodes found — refusing to guess. Retract specific nodes manually or narrow the predicate."
+                });
+                let tool_result = ToolResult::structured(json);
+                JsonRpcResponse::success(
+                    req.id.clone(),
+                    serde_json::to_value(tool_result).unwrap(),
+                )
+            }
+        }
+    }
+
+    /// Execute factum_search tool — search nodes by keyword, list predicates, or get stats.
+    fn tool_search(&self, req: &JsonRpcRequest, args: &serde_json::Value) -> JsonRpcResponse {
+        let params: FactumSearchParams = match serde_json::from_value(args.clone()) {
+            Ok(p) => p,
+            Err(e) => return JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params(e.to_string())),
+        };
+
+        let ctx = PermissionContext::public();
+        let active_nodes: Vec<_> = self.store.all_active().into_iter()
+            .filter(|n| self.store.check_permission(n, &ctx))
+            .collect();
+
+        match params.mode.as_str() {
+            "keyword" => {
+                let keyword = match &params.keyword {
+                    Some(k) if !k.is_empty() => k,
+                    _ => return JsonRpcResponse::error(req.id.clone(),
+                        JsonRpcError::invalid_params("keyword is required when mode=\"keyword\"")),
+                };
+                let limit = params.limit.unwrap_or(50).min(200);
+                let kw_lower = keyword.to_lowercase();
+
+                let matches: Vec<String> = active_nodes.iter()
+                    .filter(|n| {
+                        let canon = serialize::canonical(n);
+                        canon.to_lowercase().contains(&kw_lower)
+                    })
+                    .take(limit)
+                    .map(|n| serialize::canonical(n))
+                    .collect();
+
+                let total = matches.len();
+                let json = serde_json::json!({
+                    "mode": "keyword",
+                    "keyword": keyword,
+                    "results": matches,
+                    "count": total,
+                    "truncated": total == limit,
+                });
+                let tool_result = ToolResult::structured(json);
+                JsonRpcResponse::success(
+                    req.id.clone(),
+                    serde_json::to_value(tool_result).unwrap(),
+                )
+            }
+            "predicates" => {
+                // List all distinct predicate heads with counts
+                use std::collections::BTreeMap;
+                let mut pred_counts: BTreeMap<String, usize> = BTreeMap::new();
+                for n in &active_nodes {
+                    *pred_counts.entry(predicate_head_str(&n.predicate.head).to_string()).or_insert(0) += 1;
+                }
+                let preds: Vec<_> = pred_counts.into_iter()
+                    .map(|(head, count)| {
+                        serde_json::json!({"predicate": head, "count": count})
+                    })
+                    .collect();
+                let json = serde_json::json!({
+                    "mode": "predicates",
+                    "predicates": preds,
+                    "distinct_count": preds.len(),
+                    "total_active": active_nodes.len(),
+                });
+                let tool_result = ToolResult::structured(json);
+                JsonRpcResponse::success(
+                    req.id.clone(),
+                    serde_json::to_value(tool_result).unwrap(),
+                )
+            }
+            "stats" => {
+                let total = self.store.len();
+                let active = active_nodes.len();
+                let retracted = total - active;
+
+                use std::collections::BTreeMap;
+                let mut pred_counts: BTreeMap<String, usize> = BTreeMap::new();
+                for n in &active_nodes {
+                    *pred_counts.entry(predicate_head_str(&n.predicate.head).to_string()).or_insert(0) += 1;
+                }
+
+                let json = serde_json::json!({
+                    "mode": "stats",
+                    "total_nodes": total,
+                    "active_nodes": active,
+                    "retracted_nodes": retracted,
+                    "distinct_predicates": pred_counts.len(),
+                    "predicates": pred_counts.into_iter()
+                        .map(|(head, count)| {
+                            serde_json::json!({"predicate": head, "count": count})
+                        })
+                        .collect::<Vec<_>>(),
+                });
+                let tool_result = ToolResult::structured(json);
+                JsonRpcResponse::success(
+                    req.id.clone(),
+                    serde_json::to_value(tool_result).unwrap(),
+                )
+            }
+            _ => JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params(format!(
+                    "unknown mode: {} (expected: keyword, predicates, or stats)", params.mode
+                ))),
+        }
+    }
+
     /// List active nodes visible to the same public principal used by queries.
     fn handle_list_resources(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
         let ctx = PermissionContext::public();
@@ -524,7 +762,7 @@ mod tests {
         let resp = handler.handle(&req);
         let result = resp.result.unwrap();
         assert!(result["tools"].is_array());
-        assert_eq!(result["tools"].as_array().unwrap().len(), 5);
+        assert_eq!(result["tools"].as_array().unwrap().len(), 7);
     }
 
     #[test]

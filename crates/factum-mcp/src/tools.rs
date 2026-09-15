@@ -1,10 +1,12 @@
 //! MCP tool definitions for Factum.
 //!
-//! Five tools are exposed:
+//! Seven tools are exposed:
 //! - `factum_query`: Query the knowledge graph by predicate pattern
 //! - `factum_lookup`: Look up all knowledge about a specific entity
 //! - `factum_insert`: Insert a single node
 //! - `factum_insert_batch`: Insert multiple nodes atomically
+//! - `factum_upsert`: Update or insert a node (retract old + insert new)
+//! - `factum_search`: Search nodes by keyword, list predicates, or get stats
 //! - `factum_retract`: Retract a node (cascade)
 //!
 //! Field names use camelCase to match the MCP wire format exactly.
@@ -66,6 +68,30 @@ pub struct FactumLookupParams {
 pub struct FactumInsertBatchParams {
     /// Array of Factum-F node definitions
     pub nodes: Vec<String>,
+}
+
+/// Parameters for factum_upsert tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactumUpsertParams {
+    /// Factum-F S-expression node definition for the new node
+    pub node: String,
+    /// Entity reference to find existing nodes to retract (without @ prefix)
+    pub entity: String,
+    /// Predicate head to match (e.g. "version", "description")
+    pub predicate: String,
+}
+
+/// Parameters for factum_search tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactumSearchParams {
+    /// Search mode: "keyword" (substring match), "predicates" (list all predicate heads), "stats" (counts)
+    pub mode: String,
+    /// Keyword for substring search (required when mode="keyword")
+    #[serde(default)]
+    pub keyword: Option<String>,
+    /// Maximum results (default 50, max 200)
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 /// Get all tool definitions.
@@ -169,6 +195,54 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["nodes"]
             }),
         },
+        ToolDefinition {
+            name: "factum_upsert".into(),
+            description: "Update or insert a knowledge node. Finds active nodes matching the given entity + predicate, retracts them, then inserts the new node. If multiple matching nodes exist, returns Ambiguous (refuses to guess). If no match, performs a plain insert.".into(),
+            inputSchema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "node": {
+                        "type": "string",
+                        "description": "Factum-F node definition for the new node, e.g. (node n010 :pred (version @FACTUM-PROJECT \"0.1.2\"))"
+                    },
+                    "entity": {
+                        "type": "string",
+                        "description": "Entity name to find existing nodes (without @ prefix), e.g. \"FACTUM-PROJECT\""
+                    },
+                    "predicate": {
+                        "type": "string",
+                        "description": "Predicate head to match, e.g. \"version\""
+                    }
+                },
+                "required": ["node", "entity", "predicate"]
+            }),
+        },
+        ToolDefinition {
+            name: "factum_search".into(),
+            description: "Search the knowledge graph by keyword, list all predicates, or get statistics. Keyword mode finds nodes whose canonical text contains the keyword (case-insensitive). Predicates mode lists all distinct predicate heads with counts. Stats mode returns total node count and status breakdown.".into(),
+            inputSchema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["keyword", "predicates", "stats"],
+                        "description": "Search mode: keyword (substring search), predicates (list all predicate heads), stats (counts summary)"
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": "Keyword for substring search (required when mode=\"keyword\")"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 200,
+                        "default": 50,
+                        "description": "Maximum results (keyword mode only)"
+                    }
+                },
+                "required": ["mode"]
+            }),
+        },
     ]
 }
 
@@ -189,12 +263,14 @@ mod tests {
     #[test]
     fn test_tool_definitions() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 7);
         assert!(tools.iter().any(|t| t.name == "factum_query"));
         assert!(tools.iter().any(|t| t.name == "factum_insert"));
         assert!(tools.iter().any(|t| t.name == "factum_retract"));
         assert!(tools.iter().any(|t| t.name == "factum_lookup"));
         assert!(tools.iter().any(|t| t.name == "factum_insert_batch"));
+        assert!(tools.iter().any(|t| t.name == "factum_upsert"));
+        assert!(tools.iter().any(|t| t.name == "factum_search"));
     }
 
     #[test]
