@@ -57,6 +57,7 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 - ✅ `batch_write` for atomic multi-node writes (RocksDB WriteBatch)
 - ✅ Persistence verified: reopen database retains all data (12 tests passing)
 - ✅ Cascade retraction via reverse dependency graph (`deps_rev`)
+- ✅ `by_validity` BTreeMap index used for temporal queries (range query, not full scan)
 - ✅ Conflict arbitration with `Ambiguous` refusal (LatestWins, HighestAuthority, Unanimous, Custom)
 - 📋 MVCC optimistic concurrency with merge/abort policy
 
@@ -65,6 +66,10 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 - ✅ `preferred_form` negotiation: canonical S-expression serving for LLM clients
 - ✅ Store ↔ SubscriptionManager integration: insert/retract notifications wired
 - ✅ Store ↔ VerifierRegistry integration: optional pre-insert verification (opt-in)
+- ✅ `tools/listChanged` capability declared (MCP clients re-query tools on reconnect)
+- ✅ 8 MCP tools: query, lookup, insert, insert_batch, upsert, assert, search, retract
+- ✅ 42 handler unit tests covering all tools (normal + error + edge cases)
+- ✅ StoreError → MCP error code mapping (invalid_params vs internal)
 - 📋 Real Claude Code integration test (not self-tested handler)
 - 📋 Real Cursor integration test
 - 📋 Streamable HTTP transport (requires web framework: axum or hyper)

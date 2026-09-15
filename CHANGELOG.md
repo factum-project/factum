@@ -5,7 +5,26 @@ All notable changes to Factum will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.3] — 2026-09-15
+## [Unreleased]
+
+### Added
+- **`factum_assert` MCP tool**: New tool that accepts only a predicate S-expression (e.g. `(version @FACTUM "0.1.3")`), auto-generates a content-based node ID (`auto-` + 12 hex chars of hash), and assigns default provenance (`Asserted { by: "system" }`). Same content → same ID → second insert fails with `AlreadyExists` (prevents accidental duplicates). Optional `by` and `confidence` parameters for customization. Reduces typical insert from 60+ chars to ~30 chars. Solves dogfooding issues #8 (verbose syntax) and #10 (node ID collision risk).
+- **`pub fn canonical_predicate()`**: Previously private `canonical_predicate` function in `serialize.rs` is now public, enabling external callers to serialize predicates independently.
+- **28 handler unit tests**: Comprehensive tests for all 8 MCP tools — factum_insert (3: success, duplicate, parse error), factum_retract (2: success, not_found), factum_lookup (2: match, no_match), factum_insert_batch (2: success, parse_error_rejects_all), factum_upsert (3: 0_match, 1_match, multi_ambiguous), factum_assert (4: success, duplicate, parse_error, custom_params), factum_search (5: keyword, predicates, stats, invalid_mode, missing_keyword), store_error_to_jsonrpc (3: NotFound, AlreadyExists, Storage), generate_content_id (2: deterministic, different_content), listChanged declared (1). Handler test count: 14 → 42.
+
+### Fixed
+- **`by_validity` index unused**: `lookup_valid_at()` previously called `iter_nodes()` loading all nodes from the backend, despite a `by_validity` BTreeMap index being built in `rebuild_indices()`. Now uses BTreeMap range query `range(..=(t_ts, i64::MAX))` to select only candidate entries whose `from_ts <= t`, then filters on `until_ts` and Active status. Added `update_by_validity()` called during `insert()` and `insert_batch()` to keep the index in sync with new nodes.
+- **StoreError → MCP error code mapping**: `AlreadyExists`, `NotFound`, `PermissionDenied`, and `InvalidNode` were all mapped to MCP `internal` error (-32603), making it impossible for LLM clients to distinguish "node already exists" from a server crash. Now correctly mapped to `invalid_params` (-32602) via new `store_error_to_jsonrpc()` helper. Only `Storage` errors remain as `internal` (-32603).
+- **Search double serialization**: `factum_search` keyword mode called `serialize::canonical(n)` twice per node — once in `filter()` to check the keyword match, and again in `map()` to collect the result. Changed to `map().filter().take()` pipeline so each node is serialized only once.
+- **`tools/listChanged` not declared**: Server capabilities declared `listChanged: None` for tools, causing MCP clients (including the WorkBuddy connector) to cache `tools/list` at startup and never re-query after server version updates. Now declares `listChanged: Some(true)` — clients will re-query tools on reconnect.
+- **Tautology test**: `test_parse_error_named_before_positional` had `assert!(result.is_err() || result.is_ok())` which is always true. Fixed to `assert!(result.is_err())`.
+- **factum-mcp/README.md outdated**: Listed only 3 tools instead of 8. Updated to list all 8 tools with descriptions.
+- **factum-mcp/lib.rs module doc**: Listed only 3 tools. Updated to "8 tools".
+
+### Changed
+- MCP tool count: 7 → 8
+- Handler unit test count: 14 → 42
+- Total test count: 115 → 143
 
 ### Added
 - **`factum_upsert` MCP tool**: New tool for update-or-insert. Finds active nodes matching entity + predicate, then: 0 matches → plain insert; 1 match → insert new + retract old; 2+ matches → returns Ambiguous (refuses to guess). Insert-first ordering ensures no data loss on partial failure. Reduces 3-step update (query → retract → insert) to a single call.

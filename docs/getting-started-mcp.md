@@ -52,9 +52,10 @@ that `factum` is connected. The available tools are:
 
 - `factum_query`: query matching nodes by predicate pattern.
 - `factum_lookup`: look up all knowledge about a specific entity.
-- `factum_insert`: insert a single knowledge node.
+- `factum_insert`: insert a single knowledge node (full syntax with provenance, validity, etc.).
 - `factum_insert_batch`: insert multiple nodes atomically (all-or-nothing).
 - `factum_upsert`: update or insert a node (retract old matching node + insert new).
+- `factum_assert`: assert a fact with minimal syntax (auto-generated node ID + default provenance).
 - `factum_search`: search nodes by keyword, list predicates, or get stats.
 - `factum_retract`: retract a node and its derived dependents.
 
