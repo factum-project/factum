@@ -209,6 +209,23 @@ than present a potentially wrong answer as certain.**
 - **Dates**: Use `#date(YYYY-MM-DD)` format.
 - **Durations**: Use `#dur(Nd)` format (e.g., `#dur(30d)`).
 
+## String Literal Guidelines — When to Use Quotes
+
+Some values look like numbers or symbols to the lexer but are actually meant
+to be opaque strings. **When in doubt, use quotes.**
+
+| Value type | Without quotes (❌) | With quotes (✅) | Why |
+|------------|---------------------|-------------------|-----|
+| **Version numbers** (`0.1.1`, `2.0.3`) | `0.1.1` → parsed as `0.1` + `@.1` | `"0.1.1"` | Multiple dots split into separate tokens |
+| **URLs** (`https://...`) | `https://github.com/...` → parse error (`:` is keyword syntax) | `"https://github.com/..."` | `://` triggers keyword parsing |
+| **IP addresses** (`192.168.1.1`) | `192.168.1.1` → parsed as `192.168` + `@.1` | `"192.168.1.1"` | Same multi-dot issue as versions |
+| **File paths with colons** (`C:\Users\...`) | Parse error | `"C:\\Users\\..."` | `:` is reserved |
+| **Free-text descriptions** | Multi-word strings get split | `"Auditable memory for AI agents"` | Spaces separate tokens |
+| **Email addresses** (`user@host`) | `user@host` → parsed as entity `@host` after symbol `user` | `"user@host.com"` | `@` is entity reference prefix |
+
+**Rule of thumb**: If a value contains `.`, `:`, `@`, `?`, or spaces, and it's
+not a number/date/entity-reference/variable, wrap it in double quotes.
+
 ## Best Practices for LLM Generation
 
 1. **Always include `:src`**: Every knowledge node should declare where it

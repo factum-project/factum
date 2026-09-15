@@ -122,7 +122,7 @@ impl McpHandler {
             },
             serverInfo: ServerInfo {
                 name: "factum-mcp".into(),
-                version: "0.1.0".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
             },
             factum_morphemes: morphemes,
         };

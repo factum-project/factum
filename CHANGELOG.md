@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **LatestWins validity tiebreak**: `ConflictPolicy::LatestWins` previously compared only authority, ignoring the promised validity start tiebreak. Now correctly sorts by authority desc, then validity start desc (most recent wins). `Forever` is treated as the least recent. When authority AND validity start are both tied, the result is marked `Ambiguous`.
 - **ConflictPolicy::Custom silent guess**: `Custom` previously returned the first result silently (`group.into_iter().next().unwrap()`), violating the "We refuse to answer rather than guess" principle. Now sets `ambiguous = true` and returns no result for multi-node groups. Single-node groups still pass through normally.
 - **ArithmeticVerifier → DecimalRangeVerifier**: Renamed to match actual behavior. The verifier only checks decimal scale (≤38) and digit count (≤38), not arithmetic consistency. Doc comment updated to explicitly state this limitation and point to `SolverVerifier` / `LeanVerifier` for future arithmetic checks.
+- **MCP serverInfo version hardcoded**: `handler.rs` had `"0.1.0"` hardcoded instead of using `env!("CARGO_PKG_VERSION")`. Now correctly reports the crate version (0.1.1).
+
+### Added
+- **String literal guidelines in authoring guide**: New section in `docs/authoring-for-llms.md` documenting when values must be wrapped in double quotes — version numbers (`0.1.1`), URLs (`https://...`), IP addresses, file paths with colons, email addresses, and free-text descriptions. Discovered during first real-world self-use of Factum as agent memory.
 
 ### Added
 - **MCP server RocksDB persistence support**: `factum-mcp-server` now accepts `--db-path <PATH>` CLI argument to enable RocksDB persistence. Requires building with `--features rocksdb`. Without the flag, the server defaults to in-memory mode (backwards compatible). The `factum-mcp` crate now has an optional `rocksdb` feature that forwards to `factum-rt/rocksdb`.
