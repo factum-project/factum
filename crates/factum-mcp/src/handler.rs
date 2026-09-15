@@ -22,6 +22,27 @@ fn predicate_head_str(head: &PredicateHead) -> &str {
     }
 }
 
+/// Map a StoreError to the appropriate JSON-RPC error code.
+///
+/// - `AlreadyExists` and `NotFound` are client errors (invalid_params, -32602):
+///   the caller provided a node ID that conflicts or doesn't exist.
+/// - `PermissionDenied` is also a client error (invalid_params, -32602).
+/// - `InvalidNode` is a client error (invalid_params, -32602).
+/// - `Storage` is a server error (internal, -32603).
+fn store_error_to_jsonrpc(e: &factum_rt::store::StoreError) -> JsonRpcError {
+    match e {
+        factum_rt::store::StoreError::NotFound(_)
+        | factum_rt::store::StoreError::AlreadyExists(_)
+        | factum_rt::store::StoreError::PermissionDenied
+        | factum_rt::store::StoreError::InvalidNode(_) => {
+            JsonRpcError::invalid_params(e.to_string())
+        }
+        factum_rt::store::StoreError::Storage(_) => {
+            JsonRpcError::internal(e.to_string())
+        }
+    }
+}
+
 /// The form in which query results are serialized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PreferredForm {
@@ -122,7 +143,7 @@ impl McpHandler {
         let result = InitializeResult {
             protocolVersion: MCP_PROTOCOL_VERSION.into(),
             capabilities: ServerCapabilities {
-                tools: ToolCapability { listChanged: None },
+                tools: ToolCapability { listChanged: Some(true) },
                 resources: ResourceCapability {
                     subscribe: None,
                     listChanged: None,
@@ -292,7 +313,7 @@ impl McpHandler {
                 )
             }
             Err(e) => JsonRpcResponse::error(req.id.clone(),
-                JsonRpcError::internal(e.to_string())),
+                store_error_to_jsonrpc(&e)),
         }
     }
 
@@ -317,7 +338,7 @@ impl McpHandler {
                 )
             }
             Err(e) => JsonRpcResponse::error(req.id.clone(),
-                JsonRpcError::internal(e.to_string())),
+                store_error_to_jsonrpc(&e)),
         }
     }
 
@@ -415,7 +436,7 @@ impl McpHandler {
                 )
             }
             Err(e) => JsonRpcResponse::error(req.id.clone(),
-                JsonRpcError::internal(format!("Batch insert failed: {} (no nodes inserted)", e))),
+                store_error_to_jsonrpc(&e)),
         }
     }
 
@@ -475,7 +496,7 @@ impl McpHandler {
                         )
                     }
                     Err(e) => JsonRpcResponse::error(req.id.clone(),
-                        JsonRpcError::internal(e.to_string())),
+                        store_error_to_jsonrpc(&e)),
                 }
             }
             1 => {
@@ -518,7 +539,7 @@ impl McpHandler {
                         }
                     }
                     Err(e) => JsonRpcResponse::error(req.id.clone(),
-                        JsonRpcError::internal(format!("Insert failed: {} (old node untouched)", e))),
+                        store_error_to_jsonrpc(&e)),
                 }
             }
             _ => {
@@ -564,13 +585,11 @@ impl McpHandler {
                 let limit = params.limit.unwrap_or(50).min(200);
                 let kw_lower = keyword.to_lowercase();
 
+                // Serialize each node once, then filter+collect from the cached text
                 let matches: Vec<String> = active_nodes.iter()
-                    .filter(|n| {
-                        let canon = serialize::canonical(n);
-                        canon.to_lowercase().contains(&kw_lower)
-                    })
-                    .take(limit)
                     .map(|n| serialize::canonical(n))
+                    .filter(|canon| canon.to_lowercase().contains(&kw_lower))
+                    .take(limit)
                     .collect();
 
                 let total = matches.len();

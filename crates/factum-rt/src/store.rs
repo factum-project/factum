@@ -220,6 +220,7 @@ impl FactumStore {
 
         // Update in-memory indices
         self.update_deps_rev(&node);
+        self.update_by_validity(&node);
 
         // Insert into store (via backend, already done in batch_write)
         // But we need Arc<Node> for subscription notification
@@ -263,6 +264,7 @@ impl FactumStore {
         // Update in-memory indices and notify
         for node in &nodes {
             self.update_deps_rev(node);
+            self.update_by_validity(node);
             self.wal.write().push(WalEntry::Insert(Box::new(node.clone())));
             let arc_node = Arc::new(node.clone());
             self.subscriptions.notify_insert(&arc_node);
@@ -363,12 +365,28 @@ impl FactumStore {
     }
 
     /// Lookup nodes valid at a specific time.
+    ///
+    /// Uses the `by_validity` BTreeMap index for efficient temporal queries.
+    /// Only scans entries whose `from_ts <= t.timestamp()`, then filters
+    /// on `until_ts >= t.timestamp()` and Active status.
     pub fn lookup_valid_at(&self, t: DateTime<Utc>) -> Vec<Arc<Node>> {
-        let nodes = self.backend.iter_nodes().unwrap_or_default();
+        let t_ts = t.timestamp();
 
-        // Filter by validity
-        nodes.into_iter()
-            .filter(|n| n.status == NodeStatus::Active && n.validity.is_valid_at(t))
+        // Range query: all keys <= (t_ts, i64::MAX) covers entries
+        // where from_ts <= t_ts. We then filter on until_ts >= t_ts.
+        let by_validity = self.by_validity.read();
+        let candidate_ids: Vec<NodeId> = by_validity
+            .range(..=(t_ts, i64::MAX))
+            .flat_map(|((_, _), ids)| ids.iter().cloned())
+            .collect();
+        drop(by_validity);
+
+        // Load nodes and filter on until_ts and Active status
+        candidate_ids.into_iter()
+            .filter_map(|id| self.backend.get_node(&id).ok().flatten())
+            .filter(|n| {
+                n.status == NodeStatus::Active && n.validity.is_valid_at(t)
+            })
             .collect()
     }
 
@@ -471,6 +489,20 @@ impl FactumStore {
                 .or_default()
                 .push(node.id.clone());
         }
+    }
+
+    /// Update by_validity index for a newly inserted node.
+    fn update_by_validity(&self, node: &Node) {
+        let (from_ts, until_ts) = match node.validity {
+            Validity::Forever => (i64::MIN, i64::MAX),
+            Validity::Window { from, until } => {
+                (from.timestamp(), until.map_or(i64::MAX, |u| u.timestamp()))
+            }
+        };
+        self.by_validity.write()
+            .entry((from_ts, until_ts))
+            .or_default()
+            .push(node.id.clone());
     }
 
     fn resolve_nodes(&self, ids: &[NodeId]) -> Vec<Arc<Node>> {

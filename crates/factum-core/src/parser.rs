@@ -802,10 +802,7 @@ mod tests {
         let src = "(node n001 :pred (revenue @X :period #date(2023-01-01) 100))";
         // This should fail because positional arg comes after named arg
         let result = Parser::parse(src);
-        // Actually our parser handles this differently — let's check
-        // The named arg :period is followed by 100 which would be parsed as another named arg
-        // since it doesn't start with :. This will produce a parse error.
-        assert!(result.is_err() || result.is_ok()); // depends on parser behavior
+        assert!(result.is_err(), "expected parse error for positional arg after named arg");
     }
 
     #[test]

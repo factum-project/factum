@@ -176,7 +176,11 @@ fn resources_do_not_bypass_public_visibility_or_retraction() {
 fn initialization_only_advertises_implemented_notifications() {
     let r = exchange(vec![init()]);
     let caps = &r[0]["result"]["capabilities"];
+    // resources.subscribe is NOT implemented (no push subscriptions over stdio)
     assert_ne!(caps["resources"]["subscribe"], true);
+    // resources.listChanged is NOT implemented (resources are static)
     assert_ne!(caps["resources"]["listChanged"], true);
-    assert_ne!(caps["tools"]["listChanged"], true);
+    // tools.listChanged IS declared as true so clients re-query tools on reconnect
+    // (tool set is static within a session, but changes across server restarts/version updates)
+    assert_eq!(caps["tools"]["listChanged"], true);
 }
