@@ -171,9 +171,45 @@ derivation rule itself doesn't add or remove trust in the source.
 :conf 1.0
 ```
 
-**Fix**: Default to 0.85 for LLM-extracted knowledge. Only use 1.0 for
-verbatim quotes or human assertions of obvious facts. If you're not
-certain, set it lower — the `min_conf` query filter will handle it.
+**Fix**: The system now applies **provenance-based default confidence**
+automatically when `:conf` is omitted. These defaults are **policy constants**
+informed by academic literature and KG trust tier conventions — the literature
+supports the *ordering* (verbatim > extracted > summary > asserted) but not
+the exact point values. Values will be revised when empirical data becomes
+available (see M3: Empirical Reliability Table in `confidence-calibration-research.md`).
+
+| Provenance | Default `:conf` | Allowed agent range | Exceeding range requires |
+|------------|----------------|---------------------|-------------------------|
+| `Verbatim` | 0.95 | [0.90, 0.98] | Exceeding rejected/logged |
+| `Extracted` | 0.80 | [0.60, 0.90] | >0.90 needs corroboration |
+| `Summary` | 0.75 | [0.50, 0.85] | >0.85 needs corroboration |
+| `Asserted` | 0.60 | [0.30, 0.80] | >0.80 needs verified principal |
+| `Derived` | min(deps) × 0.95 | N/A (computed) | See research doc §4.5 |
+
+**Band clipping**: Agent self-assessment within the allowed range is accepted
+(the relative signal is valuable). Values exceeding the range require
+corroboration evidence (same canonical predicate from ≥2 independent
+`(principal, model)` pairs) or are clamped with a warning. Values below the
+range suggest the knowledge may not be worth inserting.
+
+**Derived decay**: `conf_derived = min(active_deps' conf) × rule_reliability`.
+Rule reliability defaults to 0.95 (rules can be misapplied); formally
+verified rules (future Lean proofs) use 1.0 (no decay). This ensures longer
+derivation chains accumulate uncertainty geometrically.
+
+**Academic basis**: See `docs/confidence-calibration-research.md` for the
+full literature review (7 papers, 2023–2025). Key findings:
+- LLM verbalized confidence is systematically overconfident but carries signal
+  (Tian et al. 2023) — band clipping preserves the signal while constraining
+  the inflation.
+- Inverse correlation between confidence and accuracy in clinical settings
+  (r=−0.40, JMIR 2025) — fixed defaults based on evidence type are more
+  reliable than agent self-assessment.
+- KG trust tiers (Gold/Silver/Bronze) provide production-proven ordering.
+- Future: Empirical Reliability Table (M3) will replace constants with
+  measured accuracy per `(provenance × model)` pair.
+
+Only use 1.0 for `Derived` with formal proofs (future work).
 
 ### Mistake 2: Confidence = Authority
 
@@ -234,6 +270,12 @@ thresholds:
 | Exploratory research | 0.50 | Cast a wide net |
 | Background context | 0.30 | Accept weak signals for context |
 
+**Note**: With provenance-based defaults, `Asserted` nodes default to
+`conf=0.60`. Using `min_conf: 0.70` will silently exclude all `Asserted`
+nodes (including human assertions). If you need human-asserted facts in
+results, either lower the threshold or have the asserter provide an
+explicit `:conf` above the threshold.
+
 ## Conflict Arbitration Interaction
 
 When multiple nodes match the same query, the `ConflictPolicy` uses
@@ -251,4 +293,12 @@ source.
 
 ## Version History
 
+- v0.3 (2026-09-15): Post-review revision. Added band clipping table with
+  allowed agent ranges. Added Derived multiplicative decay formula. Added
+  min_conf interaction note for Asserted nodes. Framed values as "policy
+  constants" not "scientific conclusions." See `confidence-calibration-research.md`
+  v0.3 for full revision details.
+- v0.2 (2026-09-15): Added provenance-based default confidence table with
+  academic citations. See `docs/confidence-calibration-research.md` for
+  full literature review (7 papers, 2023–2025).
 - v0.1 (2026-09-14): Initial calibration guide for v0.1.0 release.

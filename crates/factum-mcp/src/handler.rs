@@ -8,6 +8,7 @@ use smol_str::SmolStr;
 use factum_core::parser::Parser;
 use factum_core::serialize;
 use factum_core::types::*;
+use factum_core::calibration;
 use factum_rt::store::FactumStore;
 use factum_rt::query::{Query, QueryOptions};
 use factum_rt::arbitration::ConflictPolicy;
@@ -618,9 +619,16 @@ impl McpHandler {
             by: Principal(SmolStr::new(by)),
         };
 
-        // Set confidence if provided
+        // Set confidence: use explicit value if provided, else provenance-based default.
+        // The default replaces the old Confidence::default() = 1.0, which was
+        // scientifically unjustified. See docs/confidence-calibration-research.md.
         if let Some(conf) = params.confidence {
             node.confidence = Confidence(conf);
+            // M2+ will enforce band clipping here (check_confidence_band).
+            // For now, we apply the default and emit no warning — but the
+            // band check function is available for future use.
+        } else {
+            node.confidence = calibration::default_confidence_for_provenance(&node.provenance);
         }
 
         // Insert
@@ -1178,6 +1186,27 @@ mod tests {
             }));
         assert!(resp.result.is_some());
         assert_eq!(resp.result.unwrap()["structuredContent"]["action"], "asserted");
+    }
+
+    #[test]
+    fn test_tool_assert_default_confidence_is_provenance_based() {
+        // factum_assert without :conf should use provenance-based default
+        // (0.60 for Asserted), NOT the old default of 1.0.
+        let handler = make_handler();
+        let resp = call_tool(&handler, 65, "factum_assert",
+            json!({"predicate": "(status @TEST-DEFAULT-CONF checked)"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        let node_id = result["structuredContent"]["node_id"].as_str().unwrap();
+
+        // Look up the inserted node and verify confidence
+        let nodes: Vec<_> = handler.store.all_active();
+        let node = nodes.iter().find(|n| n.id.as_str() == node_id).unwrap();
+        assert_eq!(
+            node.confidence,
+            Confidence(0.60),
+            "Asserted node without explicit :conf should default to 0.60, not 1.0"
+        );
     }
 
     #[test]

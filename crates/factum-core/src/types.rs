@@ -237,7 +237,12 @@ impl Confidence {
 
 impl Default for Confidence {
     fn default() -> Self {
-        Self(1.0)
+        // Conservative default (matching Asserted provenance).
+        // Callers should use calibration::default_confidence_for_provenance()
+        // for provenance-specific defaults. This fallback ensures that even
+        // if a code path bypasses that function, the result is conservative
+        // rather than falsely certain (previous default was 1.0).
+        Self(0.60)
     }
 }
 
