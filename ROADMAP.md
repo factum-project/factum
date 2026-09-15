@@ -37,7 +37,7 @@ This roadmap tracks what's planned, in priority order. Items before the M2 line 
 - ✅ Design rationale document (`docs/design-rationale.md`)
 - ✅ Placeholder emails replaced with `@factum.dev` + GitHub Security Advisory fallback
 - ✅ GitHub org URL unified (`factum-project/factum`)
-- ✅ Version: `0.1.0`
+- ✅ Version: `0.1.1`
 - ✅ Benchmark numbers unified (pretty-JSON baseline)
 - ✅ Token efficiency table (real o200k_base measurement via tiktoken-rs; issue #9 resolved)
 - ✅ LLM authoring guide (`docs/authoring-for-llms.md`)
@@ -51,11 +51,13 @@ This roadmap tracks what's planned, in priority order. Items before the M2 line 
 
 These are **hard blockers** for any public promotion (Show HN, blog posts, conference talks):
 
-### Storage
+### Agent Memory Core
 - ✅ `StorageBackend` trait abstraction (InMemory + RocksDB backends, feature-gated)
 - ✅ RocksDB backend with 5 column families (nodes + 4 secondary indices)
 - ✅ `batch_write` for atomic multi-node writes (RocksDB WriteBatch)
 - ✅ Persistence verified: reopen database retains all data (12 tests passing)
+- ✅ Cascade retraction via reverse dependency graph (`deps_rev`)
+- ✅ Conflict arbitration with `Ambiguous` refusal (LatestWins, HighestAuthority, Unanimous, Custom)
 - 📋 MVCC optimistic concurrency with merge/abort policy
 
 ### MCP Integration
@@ -63,34 +65,23 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 - ✅ `preferred_form` negotiation: canonical S-expression serving for LLM clients
 - ✅ Store ↔ SubscriptionManager integration: insert/retract notifications wired
 - ✅ Store ↔ VerifierRegistry integration: optional pre-insert verification (opt-in)
-- 📋 Streamable HTTP transport (requires web framework: axum or hyper)
 - 📋 Real Claude Code integration test (not self-tested handler)
 - 📋 Real Cursor integration test
+- 📋 Streamable HTTP transport (requires web framework: axum or hyper)
 - 📋 Inspector prototype (TS/WASM visual debugger)
-
-### Corpus
-- 📋 Wikidata converter PoC (≥1M nodes)
-- 📋 Dead-letter queue + manual review workflow
-- 📋 Mathlib converter (Lean 4 AST → Derived nodes)
 
 ### Vocabulary
 - 📋 Morpheme table expanded from 24 to **200+** seeds
 - 📋 `morphemes.toml` format + `build.rs` codegen
 
-### Verification
-- 📋 Z3 solver verifier (`SolverVerifier` via `z3.rs`)
-- 📋 Lean process-pool verifier (`LeanVerifier` with 10s timeout)
+### Benchmarks
+- ✅ **P0**: Replace heuristic token estimator with real tokenizer (issue #9 ✅) — **confirmed**: canonical −62% tokens, compact −53% tokens
+- ✅ **Form-positioning decision**: `capabilities.factum.preferred_form` negotiation implemented. When `"canonical"`, query results return as S-expression text (−62% tokens for LLM context). When absent or `"compact"`, defaults to compact JSON.
+- 📋 Grounded QA benchmark (multi-hop fact QA with verifiable citations)
 
 ### Fuzzing
 - 📋 Fuzzing CI stable for **≥4 weeks** with no uncrashed crashes
 - 📋 OSS-Fuzz integration (optional)
-
-### Benchmarks
-- ✅ **P0**: Replace heuristic token estimator with real tokenizer (issue #9 ✅) — **confirmed**: canonical −62% tokens, compact −53% tokens
-- ✅ **Form-positioning decision**: `capabilities.factum.preferred_form` negotiation implemented. When `"canonical"`, query results return as S-expression text (−62% tokens for LLM context). When absent or `"compact"`, defaults to compact JSON.
-- 📋 Compact form vs Markdown/JSON efficiency data (published)
-- 📋 Factum-loses dimensions explicitly shown (esp. vs Markdown — Markdown likely wins on tokens due to zero metadata)
-- 📋 Grounded QA benchmark (multi-hop fact QA with verifiable citations)
 
 ### Conformance
 - 📋 Test vectors separated from Rust implementation
@@ -101,6 +92,13 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 - ✅ Confidence & authority calibration guide (`docs/confidence-calibration.md`)
 - 📋 Compact form vs Markdown/JSON efficiency data (published)
 - 📋 Factum-loses dimensions explicitly shown (esp. vs Markdown)
+
+### Corpus & Verification (lower priority for agent memory use case)
+- 📋 Wikidata converter PoC (≥1M nodes)
+- 📋 Dead-letter queue + manual review workflow
+- 📋 Mathlib converter (Lean 4 AST → Derived nodes)
+- 📋 Z3 solver verifier (`SolverVerifier` via `z3.rs`)
+- 📋 Lean process-pool verifier (`LeanVerifier` with 10s timeout)
 
 ## M3+: Research 📋
 
@@ -123,10 +121,13 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 
 These are deliberately excluded:
 
+- **No agent framework** — Factum is a memory layer via MCP, not a competitor to LangGraph/CrewAI. Framework-agnostic by design.
 - **No GPU inference in core crates** — factum-l is a separate concern
 - **No web frontend** — Inspector is TS/WASM, but it's a debugger, not a product
 - **No cloud hosting** — Factum is a library/protocol, not a SaaS
 - **No paid tier** — MIT licensed, period
+- **No embedding-based semantic search** — consider using Mem0 alongside Factum for that capability
+- **No memory consolidation/summarization** — consider using Letta alongside Factum for that capability
 
 ---
 

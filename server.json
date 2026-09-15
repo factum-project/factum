@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.factum-project/factum",
   "title": "Factum",
-  "description": "Knowledge language & MCP server: verifiable facts with provenance, confidence, audit-safe retraction",
+  "description": "Auditable memory for AI agents: provenance, cascade retraction, conflict refusal",
   "repository": {
     "url": "https://github.com/factum-project/factum",
     "source": "github"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "packages": [
     {
       "registryType": "cargo",
       "identifier": "factum-mcp",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "transport": {
         "type": "stdio"
       }

@@ -1,7 +1,7 @@
-# Factum — A Native Knowledge Language for LLMs
+# Factum — Auditable Memory for AI Agents
 
-> **Status: v0.1.0 — Working draft, seeking early collaborators.**
-> Not a release. Not production-ready. Architectural decisions are still open to change.
+> **Status: v0.1.0 — Early stage, seeking early collaborators.**
+> Core write/query/retract pipeline works. Not production-ready. Architectural decisions are still open to change.
 
 ![CI](https://github.com/factum-project/factum/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
@@ -11,84 +11,57 @@
 
 > **[Interactive docs](https://factum-project.github.io/factum/)** — animated syntax parsing, 7-tuple explorer, query pipeline, token efficiency chart, and MCP architecture diagram.
 
-Factum is a structured knowledge representation language designed as a **native format for LLMs** — not a human-facing database format. LLMs read it as context, write it as output, and (in the roadmap's endgame) think in its latent-space projection. Every design decision serves LLM-native usage: full parenthesization for parse-safe LLM generation, error class taxonomy for LLM self-correction, compact form for context economy, `Dec(i128, u8)` to catch LLM numeric hallucinations, and mandatory model references on extracted knowledge for LLM self-auditing.
+Every fact an agent writes carries mandatory provenance. When a source is retracted, everything derived from it is invalidated automatically — cascade retraction. When facts conflict, Factum returns `Ambiguous` instead of guessing.
 
-## Three-Layer Vision
+A structured knowledge language (S-expression based), Rust implementation, stdio MCP server — works with Claude Code, Cursor, and any MCP client.
 
-| Layer | What It Means | Status |
-|-------|--------------|--------|
-| **LLM Read** | LLM receives Factum-F as context payload via MCP — lower token overhead than verbose JSON | ✅ Architecture ready, token efficiency measured (real o200k_base: canonical −62%, compact −53% vs JSON) |
-| **LLM Write** | LLM generates Factum-F nodes directly — parse uniqueness guarantees one valid interpretation, error classes enable self-correction | ✅ Architecture ready, see [authoring guide](docs/authoring-for-llms.md) (draft) |
-| **LLM Think** | factum-l: encode Factum-F into continuous thought vector, LLM reasons in latent space, decode back for audit | 🔬 M3 research item — not started, not blocking layers 1-2 |
+**Status: v0.1.0, early stage.** Core write/query/retract pipeline works; no semantic search or memory consolidation yet — Factum handles verified structured facts, not conversation context. Best suited for compliance-sensitive agents, multi-agent shared knowledge bases, and anywhere "why did the agent believe X" needs an answer.
 
-Enterprise provenance, RAG enhancement, and MCP knowledge bases are **where this language first delivers value** — but they are realization paths, not the definition. The definition is: a language LLMs can use as their native knowledge medium.
+## How is this different from Mem0 / Zep / Letta?
+
+**Unique to Factum:** grammar-enforced provenance · cascade retraction · conflict refusal.
+
+**Not (yet) in Factum:** embedding-based semantic retrieval · memory consolidation · HTTP transport.
+
+Complementary: Mem0/Letta store and retrieve context; Factum stores auditable structured facts. They can run side by side via MCP.
+
+### What this means in practice
+
+| Agent memory pain point | Factum mechanism |
+|------------------------|------------------|
+| Can't tell "user said" from "LLM inferred" | 5-level provenance + grammar-enforced model name on Extracted nodes |
+| Stale memory used as current fact | Soft delete + cascade retraction via reverse dependency graph |
+| Conflicting memories silently pick one | `Ambiguous` — refuses to answer rather than guess |
+| Memory pollution (prompt injection) | Provenance chain makes contamination traceable and retractable |
+| Enterprise can't let agents store sensitive data | Index-level permission filtering — no post-query leakage |
+
+> **Academic context:** The [STALE benchmark](https://arxiv.org/abs/2605.06527) (2025) shows that even the best LLM agents achieve only 55.2% accuracy at detecting when their own memories are outdated — confirming that memory staleness is an unsolved problem in agent systems.
+
+## Key Features (Implemented)
+
+- **Node 7-tuple**: Every knowledge node carries id, predicate, validity, provenance, confidence, authority, and permissions
+- **5-level provenance**: Verbatim / Summary / Extracted / Derived / Asserted — full audit chain
+- **Grammar-enforced model reference**: `Extracted` nodes MUST carry model + version — the parser rejects them if missing (not just a documentation convention)
+- **Cascade retraction**: Derived nodes auto-invalidate when upstream sources are retracted (via `deps_rev` reverse dependency graph)
+- **Conflict arbitration**: LatestWins / HighestAuthority / Unanimous — returns `Ambiguous` when it cannot uniquely resolve
+- **Index-level permissions**: No post-query filtering — prevents aggregate leakage
+- **Lossless numerics**: All numbers use `Dec(i128, u8)` — zero floating-point error
+- **MCP bridge**: JSON-RPC 2.0 tools/resources; **stdio transport verified** with real MCP clients (Claude Code, Cursor)
 
 ## What's Implemented vs. What's Not
 
 | Module | Status | Notes |
 |--------|--------|-------|
 | factum-core (types, lexer, parser, serialize) | ✅ Implemented | 100% syntactic round-trip |
-| factum-rt (store, query, arbitration, permissions, verifiers) | ✅ Implemented | In-memory store (default) + **RocksDB persistence backend** (`--features rocksdb`, feature-gated); 5 column families, WriteBatch atomic writes, crash-durable |
-| factum-mcp (JSON-RPC bridge) | ✅ Protocol + handler | Protocol layer + request handler implemented; **stdio transport verified** end-to-end (real stdin/stdout, MCP notification handling, resource discovery); HTTP transport not yet implemented; see [Getting Started](docs/getting-started-mcp.md) for Claude Code / Cursor setup |
+| factum-rt (store, query, arbitration, permissions, verifiers) | ✅ Implemented | In-memory store (default) + **RocksDB persistence** (`--features rocksdb`); 5 column families, WriteBatch atomic writes |
+| factum-mcp (JSON-RPC bridge) | ✅ Protocol + handler | **stdio transport verified** end-to-end; HTTP transport not yet implemented (remote deployment requires custom wrapper) |
 | factum-bench (benchmarks) | ✅ Implemented | Syntax round-trip + token efficiency + query perf |
-| factum-l (latent space projection) | ❌ Not started | Planned, research-grade — see ROADMAP.md |
+| factum-l (latent space projection) | ❌ Not started | Research item — see ROADMAP.md |
 | Wikidata/Mathlib corpus converters | ❌ Not started | M2 milestone |
 | Lean/Z3 verifiers | ❌ Not started | Only Schema + DecimalRange verifiers implemented |
+| Embedding-based semantic search | ❌ Not started | Not on roadmap — consider using Mem0 alongside Factum |
+| Memory consolidation/summarization | ❌ Not started | Not on roadmap — consider using Letta alongside Factum |
 | Inspector (visual debugger) | ❌ Not started | |
-
-## Key Features (Implemented)
-
-- **Node 7-tuple**: Every knowledge node carries id, predicate, validity, provenance, confidence, authority, and permissions
-- **Lossless numerics**: All numbers use `Dec(i128, u8)` — zero floating-point error
-- **5-level provenance**: Verbatim / Summary / Extracted / Derived / Asserted — full audit chain
-- **Index-level permissions**: No post-query filtering — prevents aggregate leakage
-- **Conflict arbitration**: LatestWins / HighestAuthority / Unanimous — refuses to guess when ambiguous
-- **Cascade retraction**: Derived nodes auto-invalidate when upstream sources are retracted
-- **MCP bridge**: JSON-RPC 2.0 tools/resources with morpheme table negotiation for token efficiency; **stdio transport verified** with real MCP clients (Claude Code, Cursor)
-
-## Round-Trip Fidelity — What Exactly Is 100%?
-
-There are two distinct definitions of "round-trip fidelity":
-
-1. **Syntactic round-trip** ✅ — `parse(serialize(parse(x))) == parse(x)`. This means: if you parse Factum-F source, serialize it back to canonical form, and parse again, you get the same AST. **This is 100% and verified by the test suite + fuzzing.** This is the trust foundation of the system.
-
-2. **Semantic round-trip** ❌ Not yet measured — This is about the latent-space projection (factum-l): encode Factum-F into a continuous thought vector `z`, run LLM inference in `z` space, decode back to Factum-F', and check that `F'` is semantically equivalent to `F` (via `SemEquiv >= 0.99`). **This requires factum-l, which is not implemented.** The v0.1 target is >=0.95; 0.99 is the acceptance threshold.
-
-If you see "100% round-trip" anywhere in this repo, it refers to **syntactic** round-trip only.
-
-## Morpheme Vocabulary — Current State
-
-- **Seed morphemes**: 24 (covering common entity types, relations, quantifiers, modals, and temporal operators)
-- **Design target**: 200–500 (to be loaded from `morphemes.toml` via `build.rs`)
-- **Gap**: The current 24 seed morphemes are sufficient for testing the architecture but **not sufficient for production use**. Expanding the vocabulary is a pre-M2 requirement.
-
-## Identifier Character Set
-
-For v0.1-alpha, Entity names (`@Foo`), Symbols, and Node IDs are limited to **ASCII**: `[a-zA-Z][a-zA-Z0-9_-]*`. Unicode identifier support and NFC normalization are deferred to a future spec version pending a decision on Unicode XID_Start/XID_Continue vs ASCII-only. This is a spec-level architectural decision that will be made before M2.
-
-## Project Structure
-
-```
-factum/
-├── crates/
-│   ├── factum-core/     # Data model, lexer, parser, serialization
-│   ├── factum-rt/       # Runtime: store (InMemory + RocksDB), query, arbitration, permissions, verifiers
-│   ├── factum-mcp/      # MCP bridge: JSON-RPC tools/resources, stdio transport
-│   ├── factum-bench/    # Benchmarks: round-trip, token efficiency, query perf
-│   └── factum-demo/     # End-to-end demonstration
-├── fuzz/              # cargo-fuzz targets (parser, serialize round-trip, lexer)
-├── spec/              # Conformance test vectors (JSON, language-agnostic)
-├── docs/site/         # Interactive visualization (GitHub Pages)
-├── .github/workflows/ # CI: test + fuzz + gitleaks + Pages deploy
-├── Cargo.toml         # Workspace root
-├── ROADMAP.md         # What's planned and in what order
-├── SECURITY.md        # Vulnerability disclosure
-├── CONTRIBUTING.md    # How to contribute
-├── CHANGELOG.md       # Version history
-├── docs/design-rationale.md     # Why each architectural decision was made
-├── docs/authoring-for-llms.md   # LLM guide for generating Factum-F
-└── docs/getting-started-mcp.md  # MCP setup guide (Claude Code / Cursor)
-```
 
 ## Quick Start
 
@@ -137,7 +110,7 @@ See [Getting Started with Factum MCP](docs/getting-started-mcp.md) for the full 
 (node n004
   :pred (shareholder-major @ACME-CORP @FOUNDER-1 0.73 :since #date(2001-03-15))
   :conf 0.85 :auth 0.8 :perm confidential
-  :src (extracted "doc002" [100 200] (model "gpt-4" "2024-06")))
+  :src (extracted "doc002" [100 200] (model "claude-sonnet-4" "2025-01")))
 
 (node n006
   :pred (subsidiary-of @ACME-SUB @ACME-CORP :since #date(2001-03-15))
@@ -145,57 +118,77 @@ See [Getting Started with Factum MCP](docs/getting-started-mcp.md) for the full 
   :deps [n001])
 ```
 
+When n001 is retracted, n006 is automatically invalidated — the agent knows it can no longer trust the subsidiary relationship.
+
+## Three-Layer Architecture
+
+| Layer | What It Means | Status |
+|-------|--------------|--------|
+| **Agent Read** | Agent receives Factum-F as context via MCP — lower token overhead than verbose JSON | ✅ Token efficiency measured (real o200k_base: canonical −62%, compact −53% vs JSON) |
+| **Agent Write** | Agent generates Factum-F nodes — parse uniqueness guarantees one valid interpretation, error classes enable self-correction | ✅ See [authoring guide](docs/authoring-for-llms.md) |
+| **Latent Reasoning** | factum-l: encode Factum-F into continuous thought vector, reason in latent space, decode back for audit | 🔬 Research item — not started, not blocking layers 1-2 |
+
+A structured knowledge language underpins the memory layer — S-expression based for parse uniqueness, with `Dec(i128, u8)` for lossless numerics and mandatory model references for LLM self-auditing. Full design rationale in [docs/design-rationale.md](docs/design-rationale.md).
+
 ## Token Efficiency — The LLM-Native Metric
 
-> **TL;DR: Factum compact form saves ~68% bytes and ~54% tokens vs verbose JSON. Canonical form saves ~62% tokens — the form designed for correctness is also the most token-efficient. All numbers measured with real o200k_base (GPT-4o) tokenizer via tiktoken-rs.**
+> **TL;DR: Factum canonical form saves ~62% tokens vs verbose JSON with the same metadata. All numbers measured with real o200k_base (GPT-4o) tokenizer via tiktoken-rs.**
 
-Bytes matter for storage; **tokens matter for LLMs**. A format that saves bytes but not tokens doesn't help an LLM's context window. Here's the full picture:
+| Format | Real tokens (5 nodes) | vs verbose JSON | What it includes |
+|--------|-----------------------|-----------------|------------------|
+| Factum canonical | 238 | **−62%** | Full 7-tuple: provenance + confidence + validity + permissions |
+| Factum compact (JSON) | 290 | −53% | Same 7-tuple, JSON with numeric tags |
+| Markdown | 181 | −71% | Assertion text only — **no provenance, no confidence, no permissions** |
+| JSON (pretty) | 623 | baseline | Same 7-tuple metadata in verbose JSON encoding |
 
-### Byte Efficiency
+> Run `cargo test -p factum-bench test_token_efficiency_real_tokenizer -- --nocapture` to reproduce.
 
-All byte percentages use **pretty JSON with the same 7-tuple metadata** as the baseline.
+**Key finding**: The canonical S-expression form (238 tokens) is more token-efficient than the compact JSON form (290 tokens) — BPE tokenizers split JSON delimiters but merge S-expression parentheses. The form designed for correctness is also the most token-efficient.
 
-| Format | Bytes (5 nodes) | vs pretty JSON | What it includes |
-|--------|-----------------|----------------|------------------|
-| Factum compact (JSON) | 643 | **−68%** | Full 7-tuple: morpheme indices + numeric tags |
-| Factum canonical | 650 | −67% | Full 7-tuple: predicate + validity + provenance + confidence + authority + permissions + deps |
-| Markdown | 420 | −79% | Only the assertion text — no provenance, no confidence, no permissions |
-| JSON (pretty) | 1994 | baseline | Same 7-tuple metadata in verbose JSON encoding |
+## Round-Trip Fidelity — What Exactly Is 100%?
 
-### Token Efficiency (measured with real o200k_base tokenizer — GPT-4o)
+1. **Syntactic round-trip** ✅ — `parse(serialize(parse(x))) == parse(x)`. **100% and verified by the test suite + fuzzing.** This is the trust foundation.
 
-| Format | Real tokens (5 nodes) | vs verbose JSON | Notes |
-|--------|-----------------------|-----------------|-------|
-| Factum compact (JSON) | 290 | **−53%** | JSON keys replaced by numeric tags; significantly fewer tokens than verbose JSON |
-| Factum canonical | 238 | **−62%** | S-expression is the most token-efficient form — BPE merges parens with adjacent tokens |
-| Markdown | 181 | −71% | No metadata at all — unfair comparison (no provenance, no confidence) |
-| JSON (pretty) | 623 | baseline | Verbose keys (`"provenance"`, `"confidence"`) each cost multiple tokens |
+2. **Semantic round-trip** ❌ Not yet measured — requires factum-l (latent space projection, not implemented).
 
-> **✅ These are real tokenizer measurements** (o200k_base / GPT-4o via `tiktoken-rs`). Run `cargo test -p factum-bench test_token_efficiency_real_tokenizer -- --nocapture` to reproduce.
+## Morpheme Vocabulary — Current State
 
-**Key finding — canonical beats compact on tokens**: The canonical S-expression form (238 tokens) is more token-efficient than the compact JSON form (290 tokens). BPE tokenizers split JSON delimiters (`{`, `}`, `"`, `:`) into individual tokens, while S-expression parentheses and whitespace are frequently merged with adjacent tokens. **The form designed for correctness is also the most token-efficient form for LLM context windows.**
-
-**Form-positioning implication**: This confirms the initial finding. The implemented `capabilities.factum.preferred_form` negotiation (see `spec/compact-form.md` §8) serves canonical to LLM clients and repositions compact as a storage/service-to-service format.
-
-**The fair comparison is Factum compact vs pretty-JSON-with-same-metadata** — compact saves 68% bytes and 53% tokens.
+- **Seed morphemes**: 24 (covering common entity types, relations, quantifiers, modals, and temporal operators)
+- **Design target**: 200–500 (to be loaded from `morphemes.toml` via `build.rs`)
+- **Gap**: The current 24 seed morphemes are sufficient for testing the architecture but **not sufficient for production use**. Expanding the vocabulary is a pre-M2 requirement.
 
 ## Relationship to Other Formats
 
-Factum is not a replacement for any existing format. It occupies a specific niche: structured knowledge representation designed for LLM read/write/reason with built-in provenance and verifiability.
+| Format | How Factum Differs |
+|--------|-------------------|
+| **RDF / JSON-LD** | RDF triples carry no per-node provenance, confidence, or permissions. Factum makes these first-class and non-optional. |
+| **Markdown** | Markdown has zero metadata. Factum trades human readability for machine verifiability. |
+| **JSON** | JSON has no schema, no provenance, no temporal validity. Factum compact form uses JSON as transport but adds structure and audit chain. |
+| **Mem0 / Zep / Letta** | These store and retrieve agent memory. Factum adds grammar-enforced provenance, cascade retraction, and conflict refusal. Complementary, not competitive. |
 
-| Format | What It Is | How Factum Differs |
-|--------|-----------|-------------------|
-| **RDF / JSON-LD** | W3C semantic web standard: triples (subject, predicate, object) | Factum nodes are 7-tuples (not triples), carrying provenance, confidence, validity, authority, and permissions per-node. RDF has reification for provenance; Factum makes it first-class. |
-| **CUE** | Configuration language with validation and codegen | CUE validates configuration; Factum validates *knowledge claims* with temporal validity, conflict arbitration, and cascade retraction. Different domain. |
-| **Datalog** | Logic programming language for deductive queries | Factum supports pattern-matching queries (Datalog-like), but adds temporal validity, confidence-weighted arbitration, and provenance tracking. Factum is not Turing-complete by design. |
-| **Markdown** | Human-readable text format | Markdown is for humans. Factum-F is for LLMs — it trades human readability for machine verifiability and lossless round-trip. |
-| **JSON** | Generic data interchange format | JSON has no schema, no provenance, no temporal validity. Factum compact form uses JSON as a transport encoding but adds structure, types, and audit chain. |
+## Project Structure
 
-**When to use what**:
-- Use **RDF/JSON-LD** if you need SPARQL endpoints and W3C ecosystem compatibility
-- Use **CUE** if you're validating application configuration
-- Use **Datalog** if you need deductive inference over a rule base
-- Use **Factum** if you need LLMs to natively read, write, and (eventually) think in a structured knowledge format with verifiable provenance, confidence, and temporal validity
+```
+factum/
+├── crates/
+│   ├── factum-core/     # Data model, lexer, parser, serialization
+│   ├── factum-rt/       # Runtime: store (InMemory + RocksDB), query, arbitration, permissions, verifiers
+│   ├── factum-mcp/      # MCP bridge: JSON-RPC tools/resources, stdio transport
+│   ├── factum-bench/    # Benchmarks: round-trip, token efficiency, query perf
+│   └── factum-demo/     # End-to-end demonstration
+├── fuzz/              # cargo-fuzz targets (parser, serialize round-trip, lexer)
+├── spec/              # Conformance test vectors (JSON, language-agnostic)
+├── docs/site/         # Interactive visualization (GitHub Pages)
+├── .github/workflows/ # CI: test + fuzz + gitleaks + Pages deploy
+├── Cargo.toml         # Workspace root
+├── ROADMAP.md         # What's planned and in what order
+├── SECURITY.md        # Vulnerability disclosure
+├── CONTRIBUTING.md    # How to contribute
+├── CHANGELOG.md       # Version history
+├── docs/design-rationale.md     # Why each architectural decision was made
+├── docs/authoring-for-llms.md   # LLM guide for generating Factum-F
+└── docs/getting-started-mcp.md  # MCP setup guide (Claude Code / Cursor)
+```
 
 ## Test Results
 

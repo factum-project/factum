@@ -5,7 +5,14 @@ All notable changes to Factum will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1] — 2026-09-15
+
+### Changed
+- **Repositioning**: "A Native Knowledge Language for LLMs" → "Auditable Memory for AI Agents". The technology is unchanged — this is a messaging change that aligns Factum with the agent memory market (Mem0, Zep, Letta) where its features (provenance, cascade retraction, conflict refusal) directly solve known pain points. "Knowledge language" remains in design docs as the mechanism description.
+- **README rewritten**: New首屏 leads with agent memory positioning, includes双向对比表 (unique to Factum vs not-yet-in-Factum), and STALE benchmark citation (arxiv.org/abs/2605.06527).
+- **ROADMAP reordered**: Agent memory core items (RocksDB, MCP, cascade retraction) moved to top of M2; corpus converters and verifiers moved to lower priority. No new items added — only priority reordering. "No agent framework" and "no embedding search" added to "Not on the Roadmap" section.
+- **server.json**: Description updated to "Auditable memory for AI agents: provenance, cascade retraction, conflict refusal" (within 100-char Registry limit).
+- Version: `0.1.0` → `0.1.1`
 
 ### Fixed
 - **LatestWins validity tiebreak**: `ConflictPolicy::LatestWins` previously compared only authority, ignoring the promised validity start tiebreak. Now correctly sorts by authority desc, then validity start desc (most recent wins). `Forever` is treated as the least recent. When authority AND validity start are both tied, the result is marked `Ambiguous`.
@@ -14,9 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Confidence calibration guide** (`docs/confidence-calibration.md`): Detailed tables mapping source types, extraction methods, and knowledge categories to recommended `confidence` and `authority` values. Includes practical examples, common mistakes, and query-time threshold guidance.
-
-### Changed
-- Version: `0.1.0-alpha.1` → `0.1.0` (drop pre-release tag so `cargo add factum-rt` works without explicit version)
 
 ### Added
 - **RocksDB persistence backend** (feature `rocksdb`): `RocksDBBackend` implements `StorageBackend` trait with 5 column families (nodes + by_entity + by_pred + by_src + by_perm). Uses bincode for Node serialization, RocksDB's native WAL for durability, and `WriteBatch` for atomic multi-key writes. `FactumStore::with_rocksdb(path, registry)` constructor opens or creates a persistent database. `deps_rev` and `by_validity` indices are rebuilt in-memory on startup from persisted node data.
