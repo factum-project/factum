@@ -4,7 +4,7 @@
 //!
 //! Implements JSON-RPC 2.0 with:
 //! - `initialize` handshake (includes morpheme table negotiation)
-//! - `tools` capability: 7 tools (query, lookup, insert, insert_batch, upsert, search, retract)
+//! - `tools` capability: 8 tools (query, lookup, insert, insert_batch, upsert, assert, search, retract)
 //! - `resources` capability: `factum://nodes/{id}`
 //!
 //! Resource subscriptions are not exposed by this stdio bridge.

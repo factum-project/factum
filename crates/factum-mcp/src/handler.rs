@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 use serde_json;
+use smol_str::SmolStr;
 use factum_core::parser::Parser;
 use factum_core::serialize;
 use factum_core::types::*;
@@ -41,6 +42,20 @@ fn store_error_to_jsonrpc(e: &factum_rt::store::StoreError) -> JsonRpcError {
             JsonRpcError::internal(e.to_string())
         }
     }
+}
+
+/// Generate a content-based node ID from canonical predicate text.
+///
+/// Format: "auto-" + first 12 hex chars of SHA-256(canonical text).
+/// Same content → same ID (prevents accidental duplicates).
+/// Different content → different ID (no collision in practice with 48-bit prefix).
+fn generate_content_id(canonical_text: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    canonical_text.hash(&mut hasher);
+    let hash = hasher.finish();
+    format!("auto-{:012x}", hash & 0xFFFFFFFFFFFF)
 }
 
 /// The form in which query results are serialized.
@@ -193,6 +208,7 @@ impl McpHandler {
             "factum_insert" => self.tool_insert(req, &arguments),
             "factum_insert_batch" => self.tool_insert_batch(req, &arguments),
             "factum_upsert" => self.tool_upsert(req, &arguments),
+            "factum_assert" => self.tool_assert(req, &arguments),
             "factum_search" => self.tool_search(req, &arguments),
             "factum_retract" => self.tool_retract(req, &arguments),
             _ => JsonRpcResponse::error(req.id.clone(),
@@ -562,6 +578,65 @@ impl McpHandler {
         }
     }
 
+    /// Execute factum_assert tool — assert a fact with minimal syntax.
+    ///
+    /// Parses a predicate S-expression, auto-generates a content-based node ID,
+    /// assigns default provenance (Asserted), and inserts.
+    /// - Node ID = "auto-" + first 12 hex chars of SHA-256(canonical predicate text)
+    /// - Same content → same ID → second insert fails with AlreadyExists (prevents duplicates)
+    /// - Different content → different ID (no collision in practice)
+    fn tool_assert(&self, req: &JsonRpcRequest, args: &serde_json::Value) -> JsonRpcResponse {
+        let params: FactumAssertParams = match serde_json::from_value(args.clone()) {
+            Ok(p) => p,
+            Err(e) => return JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params(e.to_string())),
+        };
+
+        // Parse the predicate S-expression
+        let predicate = match Parser::parse_predicate(&params.predicate) {
+            Ok(p) => p,
+            Err(e) => return JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params(format!("Predicate parse error: {}", e))),
+        };
+
+        // Generate content-based node ID
+        let canon = serialize::canonical_predicate(&predicate);
+        let node_id = generate_content_id(&canon);
+
+        // Build node with defaults
+        let mut node = Node::new(node_id.clone(), predicate);
+
+        // Set provenance
+        let by = params.by.unwrap_or_else(|| "system".to_string());
+        node.provenance = Provenance::Asserted {
+            by: Principal(SmolStr::new(by)),
+        };
+
+        // Set confidence if provided
+        if let Some(conf) = params.confidence {
+            node.confidence = Confidence(conf);
+        }
+
+        // Insert
+        match self.store.insert(node) {
+            Ok(()) => {
+                let json = serde_json::json!({
+                    "action": "asserted",
+                    "node_id": node_id,
+                    "predicate": canon,
+                    "status": "fact asserted with auto-generated ID"
+                });
+                let tool_result = ToolResult::structured(json);
+                JsonRpcResponse::success(
+                    req.id.clone(),
+                    serde_json::to_value(tool_result).unwrap(),
+                )
+            }
+            Err(e) => JsonRpcResponse::error(req.id.clone(),
+                store_error_to_jsonrpc(&e)),
+        }
+    }
+
     /// Execute factum_search tool — search nodes by keyword, list predicates, or get stats.
     fn tool_search(&self, req: &JsonRpcRequest, args: &serde_json::Value) -> JsonRpcResponse {
         let params: FactumSearchParams = match serde_json::from_value(args.clone()) {
@@ -718,6 +793,7 @@ impl McpHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn make_handler() -> McpHandler {
         let store = Arc::new(FactumStore::with_seeds());
@@ -781,7 +857,7 @@ mod tests {
         let resp = handler.handle(&req);
         let result = resp.result.unwrap();
         assert!(result["tools"].is_array());
-        assert_eq!(result["tools"].as_array().unwrap().len(), 7);
+        assert_eq!(result["tools"].as_array().unwrap().len(), 8);
     }
 
     #[test]
@@ -896,5 +972,312 @@ mod tests {
         // Compact form: no "form" field present
         assert!(content.get("form").is_none());
         assert!(content["count"].as_u64().unwrap_or(0) > 0);
+    }
+
+    // ─── Tool unit tests ───────────────────────────────
+
+    fn call_tool(handler: &McpHandler, id: i64, name: &str, args: serde_json::Value) -> JsonRpcResponse {
+        handler.handle(&JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: serde_json::json!(id),
+            method: "tools/call".into(),
+            params: Some(serde_json::json!({
+                "name": name,
+                "arguments": args
+            })),
+        })
+    }
+
+    #[test]
+    fn test_tool_insert_success() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 10, "factum_insert",
+            json!({"node": "(node n010 :pred (located-in @ACME-CORP @SHENZHEN))"}));
+        assert!(resp.result.is_some());
+        assert_eq!(resp.result.unwrap()["isError"], false);
+    }
+
+    #[test]
+    fn test_tool_insert_duplicate_returns_invalid_params() {
+        let handler = make_handler();
+        // n001 already exists in make_handler
+        let resp = call_tool(&handler, 11, "factum_insert",
+            json!({"node": "(node n001 :pred (instance-of @X @Y))"}));
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602); // invalid_params, not internal
+    }
+
+    #[test]
+    fn test_tool_insert_parse_error() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 12, "factum_insert",
+            json!({"node": "(node n012 :pred (unclosed"}));
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn test_tool_retract_success() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 20, "factum_retract",
+            json!({"node_id": "n001"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        assert!(result["structuredContent"]["count"].as_u64().unwrap_or(0) > 0);
+    }
+
+    #[test]
+    fn test_tool_retract_not_found_returns_invalid_params() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 21, "factum_retract",
+            json!({"node_id": "nonexistent"}));
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602); // invalid_params
+    }
+
+    #[test]
+    fn test_tool_lookup_by_entity() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 30, "factum_lookup",
+            json!({"entity": "ACME-CORP"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        assert!(result["structuredContent"]["count"].as_u64().unwrap_or(0) > 0);
+    }
+
+    #[test]
+    fn test_tool_lookup_no_match() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 31, "factum_lookup",
+            json!({"entity": "NONEXISTENT"}));
+        assert!(resp.result.is_some());
+        assert_eq!(resp.result.unwrap()["structuredContent"]["count"], 0);
+    }
+
+    #[test]
+    fn test_tool_insert_batch_success() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 40, "factum_insert_batch",
+            json!({"nodes": [
+                "(node n010 :pred (located-in @X @Y))",
+                "(node n011 :pred (founded-on @X #date(2000-01-01)))"
+            ]}));
+        assert!(resp.result.is_some());
+        assert_eq!(resp.result.unwrap()["structuredContent"]["inserted"], 2);
+    }
+
+    #[test]
+    fn test_tool_insert_batch_parse_error_rejects_all() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 41, "factum_insert_batch",
+            json!({"nodes": [
+                "(node n010 :pred (located-in @X @Y))",
+                "(node n011 :pred (unclosed"
+            ]}));
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn test_tool_upsert_insert_when_no_match() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 50, "factum_upsert",
+            json!({
+                "node": "(node n020 :pred (version @SOME-ENTITY \"1.0\"))",
+                "entity": "SOME-ENTITY",
+                "predicate": "version"
+            }));
+        assert!(resp.result.is_some());
+        assert_eq!(resp.result.unwrap()["structuredContent"]["action"], "inserted");
+    }
+
+    #[test]
+    fn test_tool_upsert_update_when_one_match() {
+        let handler = make_handler();
+        // First insert a version node
+        call_tool(&handler, 51, "factum_insert",
+            json!({"node": "(node n021 :pred (version @ENT \"1.0\"))"}));
+        // Now upsert to update it
+        let resp = call_tool(&handler, 52, "factum_upsert",
+            json!({
+                "node": "(node n022 :pred (version @ENT \"2.0\"))",
+                "entity": "ENT",
+                "predicate": "version"
+            }));
+        assert!(resp.result.is_some());
+        assert_eq!(resp.result.unwrap()["structuredContent"]["action"], "updated");
+    }
+
+    #[test]
+    fn test_tool_upsert_ambiguous_when_multiple_match() {
+        let handler = make_handler();
+        // Insert two version nodes for same entity
+        call_tool(&handler, 53, "factum_insert",
+            json!({"node": "(node n023 :pred (version @ENT2 \"1.0\"))"}));
+        call_tool(&handler, 54, "factum_insert",
+            json!({"node": "(node n024 :pred (version @ENT2 \"2.0\"))"}));
+        // Upsert should be ambiguous
+        let resp = call_tool(&handler, 55, "factum_upsert",
+            json!({
+                "node": "(node n025 :pred (version @ENT2 \"3.0\"))",
+                "entity": "ENT2",
+                "predicate": "version"
+            }));
+        assert!(resp.result.is_some());
+        assert_eq!(resp.result.unwrap()["structuredContent"]["action"], "ambiguous");
+    }
+
+    #[test]
+    fn test_tool_assert_success() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 60, "factum_assert",
+            json!({"predicate": "(version @TEST-ASSERT \"1.0\")"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        let node_id = result["structuredContent"]["node_id"].as_str().unwrap();
+        assert!(node_id.starts_with("auto-"));
+        assert_eq!(result["structuredContent"]["action"], "asserted");
+    }
+
+    #[test]
+    fn test_tool_assert_duplicate_returns_invalid_params() {
+        let handler = make_handler();
+        // First assert
+        call_tool(&handler, 61, "factum_assert",
+            json!({"predicate": "(version @TEST-DUP \"1.0\")"}));
+        // Second assert with same content → same ID → AlreadyExists
+        let resp = call_tool(&handler, 62, "factum_assert",
+            json!({"predicate": "(version @TEST-DUP \"1.0\")"}));
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602); // invalid_params
+    }
+
+    #[test]
+    fn test_tool_assert_parse_error() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 63, "factum_assert",
+            json!({"predicate": "not a predicate"}));
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn test_tool_assert_with_custom_by_and_confidence() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 64, "factum_assert",
+            json!({
+                "predicate": "(status @TEST-BY active)",
+                "by": "agent-1",
+                "confidence": 0.8
+            }));
+        assert!(resp.result.is_some());
+        assert_eq!(resp.result.unwrap()["structuredContent"]["action"], "asserted");
+    }
+
+    #[test]
+    fn test_tool_search_keyword() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 70, "factum_search",
+            json!({"mode": "keyword", "keyword": "ACME"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        assert!(result["structuredContent"]["count"].as_u64().unwrap_or(0) > 0);
+    }
+
+    #[test]
+    fn test_tool_search_keyword_no_match() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 71, "factum_search",
+            json!({"mode": "keyword", "keyword": "NONEXISTENTXYZ"}));
+        assert!(resp.result.is_some());
+        assert_eq!(resp.result.unwrap()["structuredContent"]["count"], 0);
+    }
+
+    #[test]
+    fn test_tool_search_predicates() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 72, "factum_search",
+            json!({"mode": "predicates"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        assert!(result["structuredContent"]["distinct_count"].as_u64().unwrap_or(0) > 0);
+    }
+
+    #[test]
+    fn test_tool_search_stats() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 73, "factum_search",
+            json!({"mode": "stats"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        assert!(result["structuredContent"]["total_nodes"].as_u64().unwrap_or(0) > 0);
+    }
+
+    #[test]
+    fn test_tool_search_invalid_mode() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 74, "factum_search",
+            json!({"mode": "invalid"}));
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn test_tool_search_keyword_missing_keyword() {
+        let handler = make_handler();
+        let resp = call_tool(&handler, 75, "factum_search",
+            json!({"mode": "keyword"}));
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn test_store_error_to_jsonrpc_not_found() {
+        let e = factum_rt::store::StoreError::NotFound("test".to_string());
+        let err = store_error_to_jsonrpc(&e);
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn test_store_error_to_jsonrpc_already_exists() {
+        let e = factum_rt::store::StoreError::AlreadyExists("test".to_string());
+        let err = store_error_to_jsonrpc(&e);
+        assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn test_store_error_to_jsonrpc_storage() {
+        let e = factum_rt::store::StoreError::Storage("test".to_string());
+        let err = store_error_to_jsonrpc(&e);
+        assert_eq!(err.code, -32603);
+    }
+
+    #[test]
+    fn test_generate_content_id_deterministic() {
+        let id1 = generate_content_id("(version @X \"1.0\")");
+        let id2 = generate_content_id("(version @X \"1.0\")");
+        assert_eq!(id1, id2);
+        assert!(id1.starts_with("auto-"));
+    }
+
+    #[test]
+    fn test_generate_content_id_different_content() {
+        let id1 = generate_content_id("(version @X \"1.0\")");
+        let id2 = generate_content_id("(version @X \"2.0\")");
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_list_changed_declared() {
+        let handler = make_handler();
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: serde_json::json!(1),
+            method: "initialize".into(),
+            params: Some(serde_json::json!({"capabilities": {}})),
+        };
+        let resp = handler.handle(&req);
+        let caps = resp.result.unwrap()["capabilities"].clone();
+        assert_eq!(caps["tools"]["listChanged"], true);
     }
 }

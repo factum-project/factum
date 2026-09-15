@@ -48,6 +48,13 @@ pub fn canonical(node: &Node) -> String {
     out
 }
 
+/// Serialize a predicate to canonical S-expression form (public).
+pub fn canonical_predicate(pred: &Predicate) -> String {
+    let mut out = String::with_capacity(128);
+    canonical_predicate_inner(pred, &mut out);
+    out
+}
+
 /// Serialize multiple nodes to canonical form.
 pub fn canonical_all(nodes: &[Node]) -> String {
     let mut out = String::with_capacity(256 * nodes.len());
@@ -64,7 +71,7 @@ fn canonical_node(node: &Node, out: &mut String) {
 
     // :pred
     out.push_str(" :pred ");
-    canonical_predicate(&node.predicate, out);
+    canonical_predicate_inner(&node.predicate, out);
 
     // :valid
     out.push_str(" :valid ");
@@ -106,7 +113,7 @@ fn canonical_node(node: &Node, out: &mut String) {
     out.push(')');
 }
 
-fn canonical_predicate(pred: &Predicate, out: &mut String) {
+fn canonical_predicate_inner(pred: &Predicate, out: &mut String) {
     out.push('(');
     match &pred.head {
         PredicateHead::Id(id) => {
@@ -146,7 +153,7 @@ fn canonical_term(term: &Term, out: &mut String) {
             canonical_literal(l, out);
         }
         Term::Compound(pred) => {
-            canonical_predicate(pred, out);
+            canonical_predicate_inner(pred, out);
         }
         Term::List(items) => {
             out.push('[');

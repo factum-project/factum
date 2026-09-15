@@ -1,11 +1,12 @@
 //! MCP tool definitions for Factum.
 //!
-//! Seven tools are exposed:
+//! Eight tools are exposed:
 //! - `factum_query`: Query the knowledge graph by predicate pattern
 //! - `factum_lookup`: Look up all knowledge about a specific entity
-//! - `factum_insert`: Insert a single node
+//! - `factum_insert`: Insert a single node (full syntax)
 //! - `factum_insert_batch`: Insert multiple nodes atomically
 //! - `factum_upsert`: Update or insert a node (retract old + insert new)
+//! - `factum_assert`: Assert a fact with minimal syntax (auto node ID + provenance)
 //! - `factum_search`: Search nodes by keyword, list predicates, or get stats
 //! - `factum_retract`: Retract a node (cascade)
 //!
@@ -92,6 +93,19 @@ pub struct FactumSearchParams {
     /// Maximum results (default 50, max 200)
     #[serde(default)]
     pub limit: Option<usize>,
+}
+
+/// Parameters for factum_assert tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactumAssertParams {
+    /// Predicate S-expression, e.g. "(version @FACTUM-PROJECT \"0.1.3\")"
+    pub predicate: String,
+    /// Who is asserting this fact (default: "system")
+    #[serde(default)]
+    pub by: Option<String>,
+    /// Confidence level 0.0–1.0 (default: 1.0)
+    #[serde(default)]
+    pub confidence: Option<f32>,
 }
 
 /// Get all tool definitions.
@@ -243,6 +257,32 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["mode"]
             }),
         },
+        ToolDefinition {
+            name: "factum_assert".into(),
+            description: "Assert a fact with minimal syntax. Provide only the predicate S-expression — node ID is auto-generated from content hash, provenance defaults to Asserted. For full control (validity, deps, custom permissions), use factum_insert.".into(),
+            inputSchema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "predicate": {
+                        "type": "string",
+                        "description": "Predicate S-expression, e.g. (version @FACTUM-PROJECT \"0.1.3\")"
+                    },
+                    "by": {
+                        "type": "string",
+                        "default": "system",
+                        "description": "Who is asserting this fact"
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "default": 1,
+                        "description": "Confidence level"
+                    }
+                },
+                "required": ["predicate"]
+            }),
+        },
     ]
 }
 
@@ -263,7 +303,7 @@ mod tests {
     #[test]
     fn test_tool_definitions() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 8);
         assert!(tools.iter().any(|t| t.name == "factum_query"));
         assert!(tools.iter().any(|t| t.name == "factum_insert"));
         assert!(tools.iter().any(|t| t.name == "factum_retract"));
@@ -271,6 +311,7 @@ mod tests {
         assert!(tools.iter().any(|t| t.name == "factum_insert_batch"));
         assert!(tools.iter().any(|t| t.name == "factum_upsert"));
         assert!(tools.iter().any(|t| t.name == "factum_search"));
+        assert!(tools.iter().any(|t| t.name == "factum_assert"));
     }
 
     #[test]

@@ -84,7 +84,7 @@ fn notifications_are_silent_and_ping_works() {
     ]);
     assert_eq!(r.len(), 3, "notifications must never receive responses");
     assert_eq!(r[1], json!({"jsonrpc":"2.0","id":1,"result":{}}));
-    assert_eq!(r[2]["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(r[2]["result"]["tools"].as_array().unwrap().len(), 8);
 }
 
 #[test]
