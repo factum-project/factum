@@ -153,9 +153,9 @@ A structured knowledge language underpins the memory layer — S-expression base
 
 ## Morpheme Vocabulary — Current State
 
-- **Seed morphemes**: 24 (covering common entity types, relations, quantifiers, modals, and temporal operators)
+- **Seed morphemes**: 200+ across 9 kinds (Entity, Relation, Quantifier, Modal, Temporal, Status, Action, Attribute, Classification) — covering organizational, people, spatial, financial, product/project, version control, document/knowledge, agent memory, permission, and cause/effect domains
 - **Design target**: 200–500 (to be loaded from `morphemes.toml` via `build.rs`)
-- **Gap**: The current 24 seed morphemes are sufficient for testing the architecture but **not sufficient for production use**. Expanding the vocabulary is a pre-M2 requirement.
+- **Status**: Sufficient for agent memory use cases. `morphemes.toml` codegen is a future M2 item for external contributions.
 
 ## Relationship to Other Formats
 

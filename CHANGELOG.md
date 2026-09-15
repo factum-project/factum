@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ArithmeticVerifier → DecimalRangeVerifier**: Renamed to match actual behavior. The verifier only checks decimal scale (≤38) and digit count (≤38), not arithmetic consistency. Doc comment updated to explicitly state this limitation and point to `SolverVerifier` / `LeanVerifier` for future arithmetic checks.
 
 ### Added
+- **Morpheme vocabulary expanded from 24 to 200+ seeds**: Added 4 new `MorphemeKind` variants (Status, Action, Attribute, Classification) to the existing 5 (Entity, Relation, Quantifier, Modal, Temporal). The 200+ seed morphemes now cover: 30 entity types, 100+ relations (organizational, people, spatial, financial, product/project, version control, document/knowledge, agent memory, permission, cause/effect), 6 quantifiers, 6 modals, 8 temporal operators, 20 status states, 20 actions, 20 attributes, and 20 classification tags. Sufficient for real agent memory use cases.
 - **Confidence calibration guide** (`docs/confidence-calibration.md`): Detailed tables mapping source types, extraction methods, and knowledge categories to recommended `confidence` and `authority` values. Includes practical examples, common mistakes, and query-time threshold guidance.
 
 ### Added
@@ -104,7 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **factum-core**: S-expression lexer with full token types (symbols, variables, keywords, strings, numbers, dates, durations, booleans, URIs, entity references)
 - **factum-core**: Hand-written recursive-descent parser with full parenthesization for parse uniqueness
 - **factum-core**: Canonical serialization (fixed field order, minimal Dec representation) + compact serialization (JSON with morpheme index + numeric tags)
-- **factum-core**: Morpheme registry with 24 seed morphemes (Entity, Relation, Quantifier, Modal, Temporal)
+- **factum-core**: Morpheme registry with 200+ seed morphemes across 9 kinds (Entity, Relation, Quantifier, Modal, Temporal, Status, Action, Attribute, Classification)
 - **factum-core**: Parser depth limit (`MAX_PARSE_DEPTH = 128`) and lexer token count limit (`MAX_TOKENS = 1M`) for DoS protection
 - **factum-core**: cargo-fuzz targets for parser, serialize round-trip, and lexer
 - **factum-rt**: In-memory store with 6 secondary indices (by_entity, by_pred, by_src, by_perm, deps_rev, by_validity)
@@ -128,7 +129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known Limitations
 - Storage defaults to in-memory; RocksDB persistence available via `--features rocksdb` (no MVCC yet)
-- Morpheme vocabulary is 24 seeds (target: 200-500)
+- Morpheme vocabulary is 200+ seeds (target: 200-500)
 - MCP transport: stdio verified, HTTP not started
 - No real MCP host integration testing (Claude Code, Cursor)
 - No corpus converters (Wikidata, Mathlib)

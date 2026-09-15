@@ -71,7 +71,7 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 - 📋 Inspector prototype (TS/WASM visual debugger)
 
 ### Vocabulary
-- 📋 Morpheme table expanded from 24 to **200+** seeds
+- ✅ Morpheme table expanded from 24 to **200+** seeds across 9 kinds (Entity, Relation, Quantifier, Modal, Temporal, Status, Action, Attribute, Classification)
 - 📋 `morphemes.toml` format + `build.rs` codegen
 
 ### Benchmarks
