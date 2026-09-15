@@ -468,6 +468,24 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
+        // Detect multi-dot numbers like 0.1.1, 192.168.1.1
+        // These are not valid Dec values — guide user to use string quotes
+        if self.peek() == Some(b'.') {
+            // Check if the character after the dot is a digit
+            if self.peek_at(1).map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                return Err(LexError {
+                    message: format!(
+                        "multi-dot number '{}'... — use string quotes for version numbers, \
+                         IP addresses, etc. (e.g., \"{}...\")",
+                        buf,
+                        buf
+                    ),
+                    offset: start_offset,
+                    line: start_line,
+                    col: start_col,
+                });
+            }
+        }
         // Exponent (stored as decimal, not f64 — we keep the raw string)
         // For now, we don't support exponent notation in Dec.
         // Users should use full decimal notation.
@@ -593,5 +611,47 @@ mod tests {
         let result = Lexer::new(r#"("hello"#).tokenize();
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("UnterminatedString"));
+    }
+
+    #[test]
+    fn test_multi_dot_number_error() {
+        // 0.1.1 should be a parse error, not silently split into 0.1 + @.1
+        let result = Lexer::new("0.1.1").tokenize();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("multi-dot"), "expected multi-dot error, got: {}", err.message);
+        assert!(err.message.contains("string quotes"), "expected string quotes hint, got: {}", err.message);
+    }
+
+    #[test]
+    fn test_ip_address_error() {
+        // 192.168.1.1 should also trigger the multi-dot error
+        let result = Lexer::new("192.168.1.1").tokenize();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("multi-dot"));
+    }
+
+    #[test]
+    fn test_single_dot_number_still_ok() {
+        // Ensure normal decimals like 0.73 and -5.25 still work
+        let tokens = tokenize("0.73 -5.25");
+        assert_eq!(tokens.len(), 3); // Number, Number, Eof
+        assert_eq!(tokens[0], TokenKind::Number("0.73".into()));
+        assert_eq!(tokens[1], TokenKind::Number("-5.25".into()));
+    }
+
+    #[test]
+    fn test_integer_still_ok() {
+        // Plain integers should not be affected
+        let tokens = tokenize("42");
+        assert_eq!(tokens, vec![TokenKind::Number("42".into()), TokenKind::Eof]);
+    }
+
+    #[test]
+    fn test_trailing_dot_after_number_ok() {
+        // A number followed by a dot and non-digit (like end of sentence) should be fine
+        // The dot would be consumed as part of the number only if followed by digits
+        let tokens = tokenize("42");
+        assert_eq!(tokens, vec![TokenKind::Number("42".into()), TokenKind::Eof]);
     }
 }

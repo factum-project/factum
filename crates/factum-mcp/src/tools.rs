@@ -1,8 +1,10 @@
 //! MCP tool definitions for Factum.
 //!
-//! Three tools are exposed:
-//! - `factum_query`: Query the knowledge graph
-//! - `factum_insert`: Insert a new node
+//! Five tools are exposed:
+//! - `factum_query`: Query the knowledge graph by predicate pattern
+//! - `factum_lookup`: Look up all knowledge about a specific entity
+//! - `factum_insert`: Insert a single node
+//! - `factum_insert_batch`: Insert multiple nodes atomically
 //! - `factum_retract`: Retract a node (cascade)
 //!
 //! Field names use camelCase to match the MCP wire format exactly.
@@ -47,6 +49,23 @@ pub struct FactumInsertParams {
 pub struct FactumRetractParams {
     /// Node ID to retract
     pub node_id: String,
+}
+
+/// Parameters for factum_lookup tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactumLookupParams {
+    /// Entity reference (without @ prefix), e.g. "ACME-CORP"
+    pub entity: String,
+    /// Minimum confidence threshold
+    #[serde(default)]
+    pub min_confidence: Option<f32>,
+}
+
+/// Parameters for factum_insert_batch tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactumInsertBatchParams {
+    /// Array of Factum-F node definitions
+    pub nodes: Vec<String>,
 }
 
 /// Get all tool definitions.
@@ -112,6 +131,44 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["node_id"]
             }),
         },
+        ToolDefinition {
+            name: "factum_lookup".into(),
+            description: "Look up all knowledge about a specific entity. Returns all active nodes where the entity appears in the predicate arguments. Uses the by_entity index for fast lookup.".into(),
+            inputSchema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "entity": {
+                        "type": "string",
+                        "description": "Entity name (without @ prefix), e.g. \"ACME-CORP\""
+                    },
+                    "min_confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "default": 0,
+                        "description": "Minimum confidence threshold"
+                    }
+                },
+                "required": ["entity"]
+            }),
+        },
+        ToolDefinition {
+            name: "factum_insert_batch".into(),
+            description: "Insert multiple knowledge nodes atomically. If any node fails parsing or verification, the entire batch is rejected (no partial insert). More efficient than calling factum_insert repeatedly.".into(),
+            inputSchema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "nodes": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "description": "Array of Factum-F node definitions"
+                    }
+                },
+                "required": ["nodes"]
+            }),
+        },
     ]
 }
 
@@ -132,10 +189,12 @@ mod tests {
     #[test]
     fn test_tool_definitions() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 3);
+        assert_eq!(tools.len(), 5);
         assert!(tools.iter().any(|t| t.name == "factum_query"));
         assert!(tools.iter().any(|t| t.name == "factum_insert"));
         assert!(tools.iter().any(|t| t.name == "factum_retract"));
+        assert!(tools.iter().any(|t| t.name == "factum_lookup"));
+        assert!(tools.iter().any(|t| t.name == "factum_insert_batch"));
     }
 
     #[test]

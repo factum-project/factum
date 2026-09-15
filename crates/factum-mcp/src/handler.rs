@@ -160,7 +160,9 @@ impl McpHandler {
 
         match tool_name {
             "factum_query" => self.tool_query(req, &arguments),
+            "factum_lookup" => self.tool_lookup(req, &arguments),
             "factum_insert" => self.tool_insert(req, &arguments),
+            "factum_insert_batch" => self.tool_insert_batch(req, &arguments),
             "factum_retract" => self.tool_retract(req, &arguments),
             _ => JsonRpcResponse::error(req.id.clone(),
                 JsonRpcError::invalid_params(format!("unknown tool: {}", tool_name))),
@@ -309,6 +311,104 @@ impl McpHandler {
         }
     }
 
+    /// Execute factum_lookup tool — look up all knowledge about an entity.
+    fn tool_lookup(&self, req: &JsonRpcRequest, args: &serde_json::Value) -> JsonRpcResponse {
+        let params: FactumLookupParams = match serde_json::from_value(args.clone()) {
+            Ok(p) => p,
+            Err(e) => return JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params(e.to_string())),
+        };
+
+        // Strip leading @ if user included it
+        let entity_name = params.entity.strip_prefix('@').unwrap_or(&params.entity);
+        let entity = EntityId::new(entity_name);
+
+        // Use the by_entity index for fast lookup
+        let mut nodes = self.store.lookup_by_entity(&entity);
+
+        // Filter by min_confidence if specified
+        if let Some(min_conf) = params.min_confidence {
+            nodes.retain(|n| n.confidence.0 >= min_conf);
+        }
+
+        // Filter by permission (public) and active status
+        let ctx = PermissionContext::public();
+        nodes.retain(|n| n.status == NodeStatus::Active && self.store.check_permission(n, &ctx));
+
+        // Serialize based on preferred_form
+        let pf = *self.preferred_form.read();
+        let json = match pf {
+            PreferredForm::Canonical => {
+                let node_strs: Vec<String> = nodes.iter()
+                    .map(|n| serialize::canonical(n))
+                    .collect();
+                serde_json::json!({
+                    "nodes": node_strs,
+                    "form": "canonical",
+                    "count": nodes.len(),
+                })
+            }
+            PreferredForm::Compact => {
+                let node_strs: Vec<_> = nodes.iter()
+                    .map(|n| serialize::compact(n, self.store.registry()))
+                    .collect();
+                serde_json::json!({
+                    "nodes": node_strs,
+                    "count": nodes.len(),
+                })
+            }
+        };
+
+        let tool_result = ToolResult::structured(json);
+        JsonRpcResponse::success(
+            req.id.clone(),
+            serde_json::to_value(tool_result).unwrap(),
+        )
+    }
+
+    /// Execute factum_insert_batch tool — insert multiple nodes atomically.
+    fn tool_insert_batch(&self, req: &JsonRpcRequest, args: &serde_json::Value) -> JsonRpcResponse {
+        let params: FactumInsertBatchParams = match serde_json::from_value(args.clone()) {
+            Ok(p) => p,
+            Err(e) => return JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params(e.to_string())),
+        };
+
+        // Parse all nodes first — if any fails, reject the entire batch
+        let mut all_nodes = Vec::with_capacity(params.nodes.len());
+        for (i, node_str) in params.nodes.iter().enumerate() {
+            match Parser::parse(node_str) {
+                Ok(n) => all_nodes.extend(n),
+                Err(e) => return JsonRpcResponse::error(req.id.clone(),
+                    JsonRpcError::invalid_params(format!(
+                        "Node {} parse error: {} (batch rejected)", i, e
+                    ))),
+            }
+        }
+
+        if all_nodes.is_empty() {
+            return JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params("no nodes parsed from batch"));
+        }
+
+        // Use insert_batch for atomic insertion
+        match self.store.insert_batch(all_nodes) {
+            Ok(()) => {
+                let json = serde_json::json!({
+                    "inserted": params.nodes.len(),
+                    "status": "all nodes inserted successfully"
+                });
+                let tool_result = ToolResult::structured(json);
+                JsonRpcResponse::success(
+                    req.id.clone(),
+                    serde_json::to_value(tool_result).unwrap(),
+                )
+            }
+            Err(e) => JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::internal(format!("Batch insert failed: {} (no nodes inserted)", e))),
+        }
+    }
+
     /// List active nodes visible to the same public principal used by queries.
     fn handle_list_resources(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
         let ctx = PermissionContext::public();
@@ -424,7 +524,7 @@ mod tests {
         let resp = handler.handle(&req);
         let result = resp.result.unwrap();
         assert!(result["tools"].is_array());
-        assert_eq!(result["tools"].as_array().unwrap().len(), 3);
+        assert_eq!(result["tools"].as_array().unwrap().len(), 5);
     }
 
     #[test]

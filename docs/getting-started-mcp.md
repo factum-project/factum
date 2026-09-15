@@ -50,8 +50,10 @@ claude mcp get factum
 Start a new Claude Code session in the same directory and run `/mcp` to check
 that `factum` is connected. The available tools are:
 
-- `factum_insert`: insert a knowledge node.
-- `factum_query`: query matching nodes.
+- `factum_query`: query matching nodes by predicate pattern.
+- `factum_lookup`: look up all knowledge about a specific entity.
+- `factum_insert`: insert a single knowledge node.
+- `factum_insert_batch`: insert multiple nodes atomically (all-or-nothing).
 - `factum_retract`: retract a node and its derived dependents.
 
 To try the server without registering it permanently, save the following as

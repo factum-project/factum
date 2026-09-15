@@ -19,8 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ConflictPolicy::Custom silent guess**: `Custom` previously returned the first result silently (`group.into_iter().next().unwrap()`), violating the "We refuse to answer rather than guess" principle. Now sets `ambiguous = true` and returns no result for multi-node groups. Single-node groups still pass through normally.
 - **ArithmeticVerifier → DecimalRangeVerifier**: Renamed to match actual behavior. The verifier only checks decimal scale (≤38) and digit count (≤38), not arithmetic consistency. Doc comment updated to explicitly state this limitation and point to `SolverVerifier` / `LeanVerifier` for future arithmetic checks.
 - **MCP serverInfo version hardcoded**: `handler.rs` had `"0.1.0"` hardcoded instead of using `env!("CARGO_PKG_VERSION")`. Now correctly reports the crate version (0.1.1).
+- **Lexer multi-dot number silent corruption**: `0.1.1`, `192.168.1.1` and similar multi-dot numbers were silently split into multiple tokens (`0.1` + `@.1`), corrupting the knowledge graph without any error. Now produces a clear parse error guiding users to use string quotes (e.g., `"0.1.1"`).
 
 ### Added
+- **`factum_lookup` MCP tool**: New tool that looks up all knowledge about a specific entity using the `by_entity` index. Takes an entity name (with or without `@` prefix) and optional `min_confidence` filter. Returns all active public nodes where the entity appears in predicate arguments. This is the #1 agent memory use case — "what do I know about X?" — that previously required knowing the exact predicate.
+- **`factum_insert_batch` MCP tool**: New tool for atomic multi-node insertion. Takes an array of node strings (max 100). If any node fails parsing, the entire batch is rejected (no partial insert). Uses `FactumStore::insert_batch()` which also checks for duplicates and verifier failures atomically. 10x more efficient than calling `factum_insert` repeatedly for initial knowledge base loading.
 - **String literal guidelines in authoring guide**: New section in `docs/authoring-for-llms.md` documenting when values must be wrapped in double quotes — version numbers (`0.1.1`), URLs (`https://...`), IP addresses, file paths with colons, email addresses, and free-text descriptions. Discovered during first real-world self-use of Factum as agent memory.
 
 ### Added
@@ -123,7 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **factum-rt**: Cascade retraction propagation via reverse dependency graph
 - **factum-rt**: WAL (write-ahead log) for event replay
 - **factum-mcp**: JSON-RPC 2.0 protocol implementation (MCP 2025-06-18)
-- **factum-mcp**: Three MCP tools: `factum_query`, `factum_insert`, `factum_retract`
+- **factum-mcp**: Five MCP tools: `factum_query`, `factum_lookup`, `factum_insert`, `factum_insert_batch`, `factum_retract`
 - **factum-mcp**: Resource URI pattern `factum://nodes/{id}`
 - **factum-mcp**: Morpheme table negotiation during `initialize` handshake
 - **factum-bench**: Syntax round-trip benchmark (1000 nodes, 100%)
