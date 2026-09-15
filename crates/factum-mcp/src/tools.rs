@@ -276,8 +276,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                         "type": "number",
                         "minimum": 0,
                         "maximum": 1,
-                        "default": 1,
-                        "description": "Confidence level"
+                        "description": "Confidence level. If omitted, a provenance-based default is used (Asserted=0.60, Extracted=0.80, etc.). See docs/confidence-calibration-research.md."
                     }
                 },
                 "required": ["predicate"]
