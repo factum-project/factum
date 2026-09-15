@@ -17,6 +17,27 @@ cargo build --release -p factum-mcp --bin factum-mcp-server
 The executable is `target/release/factum-mcp-server` (with `.exe` on Windows).
 Client configurations must point to the executable on your own machine.
 
+### In-memory vs persistent (RocksDB)
+
+The default build runs **in-memory**: all data is lost when the server process
+exits. For agent memory that must survive restarts, build with the `rocksdb`
+feature and pass `--db-path`:
+
+```bash
+cargo build --release -p factum-mcp --features rocksdb --bin factum-mcp-server
+```
+
+Then use `--db-path` when registering the server:
+
+```bash
+claude mcp add --transport stdio --scope local factum -- \
+  "$(pwd)/target/release/factum-mcp-server" --db-path ~/.factum/store
+```
+
+The directory is created automatically on first run. Data persists across
+process restarts — kill the server, restart it, and previously inserted nodes
+are still queryable.
+
 ## Configure Claude Code
 
 From your Factum checkout, register the executable for this local project:
@@ -75,11 +96,11 @@ Expected observations:
 | Retract | `retracted: ["example001"]`, `count: 1` |
 | Query again | `count: 0`, `nodes: []` |
 
-The store is **in memory**. Keep this workflow in one client session; starting
-a new server process creates an empty store. Different clients do not share
-nodes. A retracted node is retained internally for auditing but is absent from
-normal queries, resource listings, and resource reads. To repeat an insertion
-within one server process, use a fresh node ID.
+The store is **in memory** by default. For persistence across sessions, build
+with `--features rocksdb` and pass `--db-path`. A retracted node is retained
+internally for auditing but is absent from normal queries, resource listings,
+and resource reads. To repeat an insertion within one server process, use a
+fresh node ID.
 
 ## Configure Cursor
 
@@ -134,7 +155,7 @@ Ordinary MCP clients receive canonical Factum text with readable entity and
 relation names. They need no custom vocabulary negotiation.
 
 A custom client can declare `capabilities.factum` during initialization to
-receive the 24-entry seed morpheme table. Such clients default to compact output
+receive the 200+ entry seed morpheme table. Such clients default to compact output
 and may explicitly choose `preferred_form: "canonical"` or `"compact"` inside
 that capability. This extension is optional; Claude Code does not need to send it.
 

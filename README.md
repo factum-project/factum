@@ -1,6 +1,6 @@
 # Factum — Auditable Memory for AI Agents
 
-> **Status: v0.1.0 — Early stage, seeking early collaborators.**
+> **Status: v0.1.1 — Early stage, seeking early collaborators.**
 > Core write/query/retract pipeline works. Not production-ready. Architectural decisions are still open to change.
 
 ![CI](https://github.com/factum-project/factum/actions/workflows/ci.yml/badge.svg)
@@ -15,7 +15,7 @@ Every fact an agent writes carries mandatory provenance. When a source is retrac
 
 A structured knowledge language (S-expression based), Rust implementation, stdio MCP server — works with Claude Code, Cursor, and any MCP client.
 
-**Status: v0.1.0, early stage.** Core write/query/retract pipeline works; no semantic search or memory consolidation yet — Factum handles verified structured facts, not conversation context. Best suited for compliance-sensitive agents, multi-agent shared knowledge bases, and anywhere "why did the agent believe X" needs an answer.
+**Status: v0.1.1, early stage.** Core write/query/retract pipeline works; no semantic search or memory consolidation yet — Factum handles verified structured facts, not conversation context. Best suited for compliance-sensitive agents, multi-agent shared knowledge bases, and anywhere "why did the agent believe X" needs an answer.
 
 ## How is this different from Mem0 / Zep / Letta?
 
@@ -79,6 +79,9 @@ cargo run -p factum-demo
 cargo build --features rocksdb
 cargo test --features rocksdb
 
+# Build MCP server with RocksDB persistence
+cargo build --release -p factum-mcp --features rocksdb --bin factum-mcp-server
+
 # Fuzz (requires nightly)
 cargo +nightly fuzz run fuzz_parser -- -max_total_time=600
 ```
@@ -86,11 +89,18 @@ cargo +nightly fuzz run fuzz_parser -- -max_total_time=600
 ### Use as an MCP server (Claude Code / Cursor)
 
 ```bash
-# Build the MCP server binary
+# Build the MCP server binary (in-memory, default)
 cargo build --release -p factum-mcp --bin factum-mcp-server
 
-# Register with Claude Code
+# Or build with RocksDB persistence (survives restarts)
+cargo build --release -p factum-mcp --features rocksdb --bin factum-mcp-server
+
+# Register with Claude Code (in-memory)
 claude mcp add --transport stdio --scope local factum -- "$(pwd)/target/release/factum-mcp-server"
+
+# Register with Claude Code (persistent — recommended for agent memory)
+claude mcp add --transport stdio --scope local factum -- \
+  "$(pwd)/target/release/factum-mcp-server" --db-path ~/.factum/store
 
 # Verify connection
 claude mcp get factum

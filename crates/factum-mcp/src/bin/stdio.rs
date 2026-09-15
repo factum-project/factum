@@ -3,11 +3,22 @@
 //! Reads JSON-RPC messages from stdin, writes responses to stdout.
 //! Each message is a single line of JSON (newline-delimited JSON-RPC).
 //!
-//! Usage:
-//!   cargo run -p factum-mcp --bin factum-mcp-server
+//! ## Usage
 //!
-//! Test with echo + jq:
-//!   echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"factum":{}}}}' | cargo run -p factum-mcp --bin factum-mcp-server
+//! ### In-memory (default, data lost on exit)
+//! ```bash
+//! factum-mcp-server
+//! ```
+//!
+//! ### Persistent (RocksDB, survives restarts)
+//! ```bash
+//! factum-mcp-server --db-path ~/.factum/store
+//! ```
+//!
+//! ### Test with echo + jq
+//! ```bash
+//! echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"factum":{}}}}' | factum-mcp-server
+//! ```
 
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
@@ -17,10 +28,87 @@ use factum_mcp::handler::McpHandler;
 use factum_mcp::protocol::JsonRpcRequest;
 use factum_rt::store::FactumStore;
 
+/// Print usage to stderr.
+fn print_usage() {
+    eprintln!("Usage: factum-mcp-server [OPTIONS]");
+    eprintln!();
+    eprintln!("Options:");
+    eprintln!("  --db-path <PATH>    Use RocksDB persistence at the given directory.");
+    eprintln!("                       The directory is created if it does not exist.");
+    eprintln!("                       Data survives process restarts.");
+    eprintln!("  --in-memory         Force in-memory mode (default). Data is lost on exit.");
+    eprintln!("  --help, -h          Print this help message.");
+    eprintln!();
+    eprintln!("When no --db-path is given, the server runs in-memory (default).");
+}
+
+/// Parse command-line arguments and return the optional RocksDB path.
+fn parse_args() -> Option<std::path::PathBuf> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut db_path: Option<std::path::PathBuf> = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--help" | "-h" => {
+                print_usage();
+                std::process::exit(0);
+            }
+            "--in-memory" => {
+                db_path = None;
+            }
+            "--db-path" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("error: --db-path requires a value");
+                    std::process::exit(1);
+                }
+                db_path = Some(std::path::PathBuf::from(&args[i]));
+            }
+            other => {
+                eprintln!("error: unknown argument '{other}'");
+                eprintln!();
+                print_usage();
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
+
+    db_path
+}
+
 fn main() {
+    let db_path = parse_args();
     let registry = Arc::new(MorphemeRegistry::with_seeds());
-    let store = Arc::new(FactumStore::new(registry));
-    let handler = McpHandler::new(store);
+
+    #[cfg(feature = "rocksdb")]
+    let store = if let Some(path) = &db_path {
+        eprintln!("factum-mcp-server: RocksDB mode at {}", path.display());
+        match FactumStore::with_rocksdb(path, registry.clone()) {
+            Ok(store) => store,
+            Err(e) => {
+                eprintln!("error: failed to open RocksDB at {}: {}", path.display(), e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        eprintln!("factum-mcp-server: in-memory mode (data will be lost on exit)");
+        FactumStore::new(registry)
+    };
+
+    #[cfg(not(feature = "rocksdb"))]
+    let store = {
+        if db_path.is_some() {
+            eprintln!("error: --db-path requires building with --features rocksdb");
+            eprintln!("hint: rebuild with: cargo build --release -p factum-mcp --features rocksdb");
+            std::process::exit(1);
+        }
+        eprintln!("factum-mcp-server: in-memory mode (data will be lost on exit)");
+        FactumStore::new(registry)
+    };
+
+    let handler = McpHandler::new(Arc::new(store));
 
     let stdin = io::stdin();
     let stdout = io::stdout();

@@ -7,6 +7,10 @@ description = "MCP bridge for Factum — JSON-RPC tools and resources"
 repository = "https://github.com/factum-project/factum"
 readme = "README.md"
 
+[features]
+default = []
+rocksdb = ["factum-rt/rocksdb"]
+
 [dependencies]
 factum-core.workspace = true
 factum-rt.workspace = true
