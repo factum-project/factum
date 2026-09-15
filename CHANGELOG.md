@@ -5,6 +5,16 @@ All notable changes to Factum will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] — 2026-09-15
+
+### Added
+- **`factum_upsert` MCP tool**: New tool for update-or-insert. Finds active nodes matching entity + predicate, then: 0 matches → plain insert; 1 match → insert new + retract old; 2+ matches → returns Ambiguous (refuses to guess). Insert-first ordering ensures no data loss on partial failure. Reduces 3-step update (query → retract → insert) to a single call.
+- **`factum_search` MCP tool**: New tool with three modes — keyword (case-insensitive substring search over canonical text, max 200 results), predicates (list all distinct predicate heads with counts), stats (total/active/retracted node counts + per-predicate breakdown). Helps agents answer "what do I know?" and "what predicates exist?" without knowing exact patterns.
+
+### Changed
+- Version: `0.1.2` → `0.1.3` (0.1.2 was already published to crates.io before these two new tools were added)
+- MCP tool count: 5 → 7
+
 ## [0.1.2] — 2026-09-15
 
 ### Fixed

@@ -1,6 +1,6 @@
 # Factum — Auditable Memory for AI Agents
 
-> **Status: v0.1.2 — Early stage, seeking early collaborators.**
+> **Status: v0.1.3 — Early stage, seeking early collaborators.**
 > Core write/query/retract pipeline works. Not production-ready. Architectural decisions are still open to change.
 
 ![CI](https://github.com/factum-project/factum/actions/workflows/ci.yml/badge.svg)
@@ -15,7 +15,7 @@ Every fact an agent writes carries mandatory provenance. When a source is retrac
 
 A structured knowledge language (S-expression based), Rust implementation, stdio MCP server — works with Claude Code, Cursor, and any MCP client.
 
-**Status: v0.1.2, early stage.** Core write/query/retract pipeline works; no semantic search or memory consolidation yet — Factum handles verified structured facts, not conversation context. Best suited for compliance-sensitive agents, multi-agent shared knowledge bases, and anywhere "why did the agent believe X" needs an answer.
+**Status: v0.1.3, early stage.** Core write/query/retract pipeline works; no semantic search or memory consolidation yet — Factum handles verified structured facts, not conversation context. Best suited for compliance-sensitive agents, multi-agent shared knowledge bases, and anywhere "why did the agent believe X" needs an answer.
 
 ## How is this different from Mem0 / Zep / Letta?
 
