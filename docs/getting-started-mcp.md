@@ -51,7 +51,7 @@ Start a new Claude Code session in the same directory and run `/mcp` to check
 that `factum` is connected. The available tools are:
 
 - `factum_query`: query matching nodes by predicate pattern.
-- `factum_lookup`: look up all knowledge about a specific entity.
+- `factum_lookup`: look up all knowledge about a specific entity (exact match only; for partial matching use `factum_search`).
 - `factum_insert`: insert a single knowledge node (full syntax with provenance, validity, etc.).
 - `factum_insert_batch`: insert multiple nodes atomically (all-or-nothing).
 - `factum_upsert`: update or insert a node (retract old matching node + insert new).
@@ -177,6 +177,12 @@ that capability. This extension is optional; Claude Code does not need to send i
 - **Duplicate node ID:** use a different ID or start a fresh server process.
 - **No output until newline:** stdio reads one JSON object per line. Empty lines
   are ignored; stdout is reserved for protocol responses.
+- **New tools or schema changes not visible after binary rebuild:** MCP
+  clients (Claude Code, Cursor, WorkBuddy) cache the `tools/list` response
+  at connection time. After rebuilding `factum-mcp-server`, **restart the
+  client or re-trust the MCP connector** so it re-queries the tool list.
+  Although Factum advertises `listChanged: true`, not all clients act on
+  the `notifications/tools/list_changed` signal automatically.
 
 ## Tests and further reading
 

@@ -291,6 +291,41 @@ Confidence is **not** used in arbitration — it's a pre-filter via
 overriding a lower-confidence-but-correct node from a more authoritative
 source.
 
+## Mixed-Era Knowledge Bases
+
+If you started using Factum before the confidence calibration changes
+(v0.1.1+), your knowledge base may contain two generations of nodes:
+
+- **Pre-calibration nodes**: `conf=0.85–1.0` (agent self-assigned, inflated)
+- **Post-calibration nodes**: `conf=0.60` (provenance-based default, honest)
+
+This creates a paradox: `min_conf: 0.70` filters **out** the honest new
+nodes while keeping the inflated old ones — exactly backwards.
+
+### Recommendation
+
+1. **Short-term**: Don't use `min_conf > 0.60` on mixed-era knowledge bases.
+   Either omit `min_conf` (default 0.0 includes everything) or set it to
+   ≤0.50 for exploratory queries.
+
+2. **Medium-term**: Re-assert critical old nodes. Use `factum_assert` (or
+   `factum_insert` with explicit `:conf`) to re-create important facts with
+   honest provenance-based defaults, then retract the old inflated nodes:
+   ```
+   factum_assert "(status @MY-PROJECT active)" :by "agent-1"
+   factum_retract "old-node-id"
+   ```
+
+3. **Long-term**: The M3 Empirical Reliability Table will replace all
+   default constants with measured accuracy per `(provenance × model)` pair,
+   making this a non-issue going forward.
+
+### Detecting inflated nodes
+
+Run `factum_search` with `mode="stats"` and check the confidence
+distribution. If most nodes have `conf ≥ 0.85`, they are likely
+pre-calibration. Post-calibration `Asserted` nodes default to `0.60`.
+
 ## Version History
 
 - v0.3 (2026-09-15): Post-review revision. Added band clipping table with

@@ -27,7 +27,7 @@ Every Factum-F node is a 7-tuple with this canonical structure:
 **Required fields**: `:pred` (the assertion). All other fields have defaults:
 - `:valid` defaults to `forever`
 - `:src` defaults to `(asserted "system")`
-- `:conf` defaults to `1.0`
+- `:conf` defaults to a provenance-based value (0.60 for Asserted, 0.80 for Extracted, etc. — see [Confidence Calibration Guide](confidence-calibration.md))
 - `:auth` defaults to `0.5`
 - `:perm` defaults to `public`
 - `:deps` defaults to empty
@@ -111,9 +111,13 @@ have a matching `)`. Use the parser error's line/col to locate the mismatch.
 ```scheme
 (node n001
   :pred (instance-of @ACME-CORP organization)
-  :conf 0.99 :auth 0.95 :perm public
+  :conf 0.95 :auth 0.95 :perm public
   :src (asserted "wikidata"))
 ```
+
+> **Note**: `:conf 0.95` is within the Asserted band [0.30, 0.80] only if
+> the principal is verified. For unverified assertions, `:conf` defaults to
+> 0.60 if omitted. See the calibration guide for details.
 
 ### Template 2: Extracted Knowledge (LLM-generated)
 
@@ -230,8 +234,9 @@ not a number/date/entity-reference/variable, wrap it in double quotes.
 
 1. **Always include `:src`**: Every knowledge node should declare where it
    came from. If the LLM generated it, use `extracted` with the model reference.
-2. **Set realistic `:conf`**: Don't default to 1.0 unless you're certain.
-   0.8-0.9 is appropriate for LLM-extracted knowledge. See the
+2. **Set realistic `:conf`**: If you omit `:conf`, a provenance-based default
+   is applied automatically (Asserted=0.60, Extracted=0.80, etc.). Only set
+   an explicit value when you have reason to deviate from the default. See the
    [Confidence Calibration Guide](confidence-calibration.md) for detailed
    tables mapping source types and extraction methods to recommended
    confidence and authority values.

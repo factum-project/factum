@@ -173,7 +173,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "factum_lookup".into(),
-            description: "Look up all knowledge about a specific entity. Returns all active nodes where the entity appears in the predicate arguments. Uses the by_entity index for fast lookup.".into(),
+            description: "Look up all knowledge about a specific entity. Returns all active nodes where the entity appears in the predicate arguments. Uses exact entity name matching (e.g. \"ACME-CORP\" matches only @ACME-CORP, not @ACME-SUBSIDIARY). For partial/substring matching, use factum_search with mode=\"keyword\" instead.".into(),
             inputSchema: serde_json::json!({
                 "type": "object",
                 "properties": {

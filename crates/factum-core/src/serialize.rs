@@ -36,6 +36,21 @@ impl Default for Serializer {
     }
 }
 
+/// Format an f32 confidence/authority value so that whole numbers retain
+/// at least one decimal place (e.g. 1.0 → "1.0", 0.6 → "0.6", 0.85 → "0.85").
+///
+/// Without this, `format!("{}", 1.0f32)` produces "1", which looks like an
+/// integer and breaks round-trip parsing (the parser expects a float-looking
+/// value for :conf/:auth fields). See ISSUES.md #5.
+fn format_f32_with_decimal(v: f32) -> String {
+    let s = format!("{}", v);
+    if s.contains('.') {
+        s
+    } else {
+        format!("{}.0", s)
+    }
+}
+
 // ─── Canonical Serialization ────────────────────────────────
 
 /// Serialize a node to canonical S-expression form.
@@ -83,11 +98,11 @@ fn canonical_node(node: &Node, out: &mut String) {
 
     // :conf
     out.push_str(" :conf ");
-    let _ = std::fmt::Write::write_fmt(out, format_args!("{}", node.confidence.0));
+    out.push_str(&format_f32_with_decimal(node.confidence.0));
 
     // :auth
     out.push_str(" :auth ");
-    let _ = std::fmt::Write::write_fmt(out, format_args!("{}", node.authority.0));
+    out.push_str(&format_f32_with_decimal(node.authority.0));
 
     // :perm
     out.push_str(" :perm ");
@@ -554,5 +569,39 @@ mod tests {
         let node = make_test_node();
         let s = compact(&node, &registry);
         assert!(s.contains(&id.0.to_string()));
+    }
+
+    #[test]
+    fn test_confidence_1_0_serializes_with_decimal() {
+        // Regression: f32 1.0 used to serialize as "1" (no decimal point).
+        // Now it should always include at least one decimal place.
+        let node = Node::new("n010",
+            Predicate::new("status")
+                .with_args(vec![Term::ent("X"), Term::ent("active")]))
+            .with_confidence(Confidence(1.0))
+            .with_authority(Authority(1.0));
+        let s = canonical(&node);
+        assert!(s.contains(":conf 1.0"), "expected ':conf 1.0' in: {}", s);
+        assert!(s.contains(":auth 1.0"), "expected ':auth 1.0' in: {}", s);
+    }
+
+    #[test]
+    fn test_confidence_0_6_serializes_correctly() {
+        let node = Node::new("n011",
+            Predicate::new("status")
+                .with_args(vec![Term::ent("X"), Term::ent("active")]))
+            .with_confidence(Confidence(0.6))
+            .with_authority(Authority(0.5));
+        let s = canonical(&node);
+        assert!(s.contains(":conf 0.6"), "expected ':conf 0.6' in: {}", s);
+        assert!(s.contains(":auth 0.5"), "expected ':auth 0.5' in: {}", s);
+    }
+
+    #[test]
+    fn test_format_f32_with_decimal() {
+        assert_eq!(format_f32_with_decimal(1.0), "1.0");
+        assert_eq!(format_f32_with_decimal(0.6), "0.6");
+        assert_eq!(format_f32_with_decimal(0.85), "0.85");
+        assert_eq!(format_f32_with_decimal(0.0), "0.0");
     }
 }
