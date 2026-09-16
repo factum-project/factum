@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **WeightedVote conflict policy**: New `ConflictPolicy::WeightedVote { weights }` variant for multi-agent conflict resolution. Groups conflicting nodes by predicate canonical form, sums per-principal weights, and resolves if a group exceeds 50% of total weight. Returns `Ambiguous` when no majority exists (refuses to answer). MCP `factum_query` tool now accepts `policy: "weighted"` with optional `agent_weights` parameter. 5 tests covering majority win, no-majority ambiguity, all-agree, unknown-principal default weight, and single-node passthrough.
+- **Multi-agent usage guide** (`docs/multi-agent-usage.md`): Comprehensive guide for using Factum as a shared knowledge base for multiple agents. Covers architecture (single server, multiple clients), 5 core capabilities (provenance, permissions, dedup, cascade retraction, weighted voting), 3 conflict scenarios, best practices, and explicit "what Factum does NOT do" (agent orchestration, messaging, identity management).
+- **M3 reliability table extended to `(provenance, model, principal)`**: The Empirical Reliability Table design now includes a `principal` dimension, enabling per-agent reliability tracking in multi-agent scenarios. Updated in ROADMAP.md, calibration.rs doc comments, and confidence-calibration-research.md.
+
+### Changed
+- `ConflictPolicy` enum: removed `Copy` derive (needed for `WeightedVote`'s `HashMap`). All usage sites use `Clone` or references — no breaking changes.
+- README: conflict arbitration now lists 4 policies (added WeightedVote). Links to multi-agent usage guide.
+- `factum_query` MCP tool schema: `policy` enum adds `"weighted"`. New `agent_weights` parameter (JSON object of principal→weight).
+
 ### Fixed
 - **f32 confidence/authority serialization (ISSUES #5)**: `format!("{}", 1.0f32)` produces `"1"` instead of `"1.0"`, causing round-trip parsing issues. Added `format_f32_with_decimal()` helper in `serialize.rs` that ensures at least one decimal place. Applied to `:conf` and `:auth` canonical serialization. 3 regression tests added.
 - **factum_lookup tool description (ISSUES #11)**: Tool description now explicitly states it uses exact entity name matching and suggests `factum_search` for partial matching. Updated `getting-started-mcp.md` tool list accordingly.

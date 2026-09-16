@@ -15,7 +15,7 @@ Every fact an agent writes carries mandatory provenance. When a source is retrac
 
 A structured knowledge language (S-expression based), Rust implementation, stdio MCP server — works with Claude Code, Cursor, and any MCP client.
 
-**Status: v0.1.3, early stage.** Core write/query/retract pipeline works; no semantic search or memory consolidation yet — Factum handles verified structured facts, not conversation context. Best suited for compliance-sensitive agents, multi-agent shared knowledge bases, and anywhere "why did the agent believe X" needs an answer.
+**Status: v0.1.3, early stage.** Core write/query/retract pipeline works; no semantic search or memory consolidation yet — Factum handles verified structured facts, not conversation context. Best suited for compliance-sensitive agents, multi-agent shared knowledge bases, and anywhere "why did the agent believe X" needs an answer. See the [multi-agent usage guide](docs/multi-agent-usage.md) for shared knowledge base patterns.
 
 ## How is this different from Mem0 / Zep / Letta?
 
@@ -43,7 +43,7 @@ Complementary: Mem0/Letta store and retrieve context; Factum stores auditable st
 - **5-level provenance**: Verbatim / Summary / Extracted / Derived / Asserted — full audit chain
 - **Grammar-enforced model reference**: `Extracted` nodes MUST carry model + version — the parser rejects them if missing (not just a documentation convention)
 - **Cascade retraction**: Derived nodes auto-invalidate when upstream sources are retracted (via `deps_rev` reverse dependency graph)
-- **Conflict arbitration**: LatestWins / HighestAuthority / Unanimous — returns `Ambiguous` when it cannot uniquely resolve
+- **Conflict arbitration**: LatestWins / HighestAuthority / Unanimous / WeightedVote — returns `Ambiguous` when it cannot uniquely resolve
 - **Index-level permissions**: No post-query filtering — prevents aggregate leakage
 - **Lossless numerics**: All numbers use `Dec(i128, u8)` — zero floating-point error
 - **MCP bridge**: JSON-RPC 2.0 tools/resources; **stdio transport verified** with real MCP clients (Claude Code, Cursor)

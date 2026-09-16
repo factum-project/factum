@@ -4,6 +4,7 @@
 //! - `LatestWins`: highest authority wins, tiebreak by most recent validity
 //! - `HighestAuthority`: strictly by authority score
 //! - `Unanimous`: only return if all sources agree
+//! - `WeightedVote`: weighted majority vote by principal (multi-agent)
 //! - `Custom`: user-provided function
 //!
 //! ## Key Design Decision
@@ -20,19 +21,41 @@
 //! | `LatestWins`      | `true`         | Yes (best guess)  | Authority+validity tie, pick one |
 //! | `HighestAuthority`| `true`         | Yes (first winner)| Authority tie, return a candidate|
 //! | `Unanimous`       | `true`         | No (empty)        | Sources disagree, no answer      |
+//! | `WeightedVote`    | `true`         | No (empty)        | No majority, refuse              |
 //! | `Custom`          | `true`         | No (empty)        | No function, refuse              |
 //!
 //! **`LatestWins` and `HighestAuthority`** return a candidate even on ambiguity.
 //! The caller receives `results.len() > 0` with `ambiguous = true`, meaning
 //! "here is the best candidate, but it is not authoritative — use with caution."
 //!
-//! **`Unanimous` and `Custom`** return nothing on ambiguity. The caller receives
-//! `results.is_empty()` with `ambiguous = true`, meaning "we could not agree,
-//! so we refuse to provide any answer."
+//! **`Unanimous`, `WeightedVote`, and `Custom`** return nothing on ambiguity.
+//! The caller receives `results.is_empty()` with `ambiguous = true`, meaning
+//! "we could not agree, so we refuse to provide any answer."
 //!
 //! This asymmetry is intentional: authority-based policies always have a
 //! "best" candidate to offer (even if tied), while agreement-based policies
 //! have no meaningful candidate when consensus fails.
+//!
+//! ## WeightedVote (Multi-Agent)
+//!
+//! `WeightedVote` is designed for multi-agent scenarios where different agents
+//! (principals) have different reliability weights. When multiple agents assert
+//! conflicting facts, the policy groups them by predicate value and sums the
+//! weights of each group. A group wins if its total weight exceeds 50% of the
+//! total. If no group reaches 50%, the result is `Ambiguous` (refuse to answer).
+//!
+//! Weights are derived from the node's provenance `Principal` field. Nodes
+//! without a recognizable principal (e.g., `Asserted { by: "system" }`) receive
+//! a default weight of 0.5. Nodes with `Extracted` provenance use the model
+//! name as the principal for weighting.
+//!
+//! Example:
+//! ```text
+//! Agent A (weight 0.5): (status @X active)
+//! Agent B (weight 0.3): (status @X active)   → same predicate, combined weight 0.8
+//! Agent C (weight 0.2): (status @X inactive) → different predicate, weight 0.2
+//! Total weight: 1.0. "active" group has 0.8 > 0.5 → resolved.
+//! ```
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,7 +64,7 @@ use factum_core::types::*;
 use crate::query::QueryResult;
 
 /// Conflict resolution policy.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ConflictPolicy {
     /// Default: highest authority wins, tiebreak by most recent validity start.
     LatestWins,
@@ -49,6 +72,14 @@ pub enum ConflictPolicy {
     HighestAuthority,
     /// Only return if all sources agree (same predicate).
     Unanimous,
+    /// Weighted majority vote by principal. Weights are provided as a
+    /// `Principal → f32` map. A group wins if its total weight > 50% of total.
+    /// If no majority, returns `Ambiguous` (refuse to answer).
+    WeightedVote {
+        /// Map from principal name to weight (0.0–1.0). Principals not in this
+        /// map receive a default weight of 0.5.
+        weights: HashMap<String, f32>,
+    },
     /// User-provided arbitration function (not implementable in v0.1 const context).
     /// When selected, all multi-node groups are marked Ambiguous — we refuse to
     /// answer rather than silently guess.
@@ -148,6 +179,47 @@ pub fn arbitrate(
                     ambiguous = true;
                 }
             }
+            ConflictPolicy::WeightedVote { weights } => {
+                // Group by predicate canonical form, sum weights per group.
+                // A group wins if its total weight > 50% of total weight.
+                // If no group reaches majority, mark Ambiguous (refuse).
+                let default_weight = 0.5f32;
+
+                // Build predicate_signature → (total_weight, first_result)
+                let mut pred_groups: HashMap<String, (f32, QueryResult)> = HashMap::new();
+                let mut total_weight = 0.0f32;
+
+                for r in &group {
+                    let sig = predicate_signature(&r.node.predicate);
+                    let principal_name = principal_str(&r.node.provenance);
+                    let w = weights
+                        .get(&principal_name)
+                        .copied()
+                        .unwrap_or(default_weight);
+                    total_weight += w;
+                    pred_groups
+                        .entry(sig)
+                        .and_modify(|(tw, _)| *tw += w)
+                        .or_insert((w, r.clone()));
+                }
+
+                // Find the group with highest total weight
+                if let Some((_best_sig, (best_weight, best_result))) =
+                    pred_groups.iter().max_by(|(_, (aw, _)), (_, (bw, _))| {
+                        aw.partial_cmp(bw).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                {
+                    // Win condition: best weight > 50% of total
+                    if *best_weight > total_weight * 0.5 {
+                        results.push(best_result.clone());
+                    } else {
+                        // No majority — refuse to answer
+                        ambiguous = true;
+                    }
+                } else {
+                    ambiguous = true;
+                }
+            }
             ConflictPolicy::Custom => {
                 // Custom arbitration is not implementable in v0.1 (requires a
                 // user-provided function, which cannot be stored in a const enum).
@@ -205,6 +277,30 @@ fn validity_recency_cmp(a: &Validity, b: &Validity) -> std::cmp::Ordering {
         (Validity::Window { from: a_from, .. }, Validity::Window { from: b_from, .. }) => {
             a_from.cmp(b_from)
         }
+    }
+}
+
+/// Create a canonical signature string for a predicate, used for grouping
+/// in WeightedVote. Two predicates with the same head, same args, and same
+/// named args produce the same signature.
+fn predicate_signature(pred: &Predicate) -> String {
+    use factum_core::serialize::canonical_predicate;
+    canonical_predicate(pred)
+}
+
+/// Extract the principal name from a provenance for WeightedVote weighting.
+///
+/// - `Asserted { by }` → `by.0` (the principal name)
+/// - `Extracted { model, .. }` → `model.name` (the model that extracted it)
+/// - `Verbatim` / `Summary` → `"document"` (no principal)
+/// - `Derived { from, rule }` → `"derived"` (no principal)
+fn principal_str(p: &Provenance) -> String {
+    match p {
+        Provenance::Asserted { by } => by.0.to_string(),
+        Provenance::Extracted { model, .. } => model.name.to_string(),
+        Provenance::Verbatim { .. } => "document".to_string(),
+        Provenance::Summary { .. } => "document".to_string(),
+        Provenance::Derived { .. } => "derived".to_string(),
     }
 }
 
@@ -385,5 +481,151 @@ mod tests {
         let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Unanimous);
         assert!(ambiguous);
         assert!(results.is_empty(), "Unanimous must not return any result on disagreement");
+    }
+
+    // ── WeightedVote tests (multi-agent conflict resolution) ──
+
+    fn make_result_with_provenance(
+        id: &str,
+        auth: f32,
+        pred: Predicate,
+        prov: Provenance,
+    ) -> QueryResult {
+        QueryResult {
+            node: Arc::new(
+                Node::new(id, pred)
+                    .with_authority(Authority(auth))
+                    .with_provenance(prov),
+            ),
+            bindings: vec![],
+        }
+    }
+
+    fn asserted_by(name: &str) -> Provenance {
+        Provenance::Asserted {
+            by: Principal(SmolStr::new(name)),
+        }
+    }
+
+    #[test]
+    fn test_weighted_vote_majority_wins() {
+        // Agent A (weight 0.5) and Agent B (weight 0.3) agree: status=active
+        // Agent C (weight 0.2) disagrees: status=inactive
+        // "active" group total = 0.8 > 0.5*1.0 = 0.5 → resolved
+        let mut weights = HashMap::new();
+        weights.insert("agent-a".to_string(), 0.5);
+        weights.insert("agent-b".to_string(), 0.3);
+        weights.insert("agent-c".to_string(), 0.2);
+
+        let pred_active = Predicate::new("status")
+            .with_args(vec![Term::ent("X"), Term::ent("active")]);
+        let pred_inactive = Predicate::new("status")
+            .with_args(vec![Term::ent("X"), Term::ent("inactive")]);
+
+        let matches = vec![
+            make_result_with_provenance("n001", 0.5, pred_active.clone(), asserted_by("agent-a")),
+            make_result_with_provenance("n002", 0.5, pred_active.clone(), asserted_by("agent-b")),
+            make_result_with_provenance("n003", 0.5, pred_inactive.clone(), asserted_by("agent-c")),
+        ];
+
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights });
+        assert!(!ambiguous, "majority should resolve");
+        assert_eq!(results.len(), 1);
+        // Winner should be one of the "active" nodes
+        assert!(
+            results[0].node.id.as_str() == "n001" || results[0].node.id.as_str() == "n002",
+            "winner should be an 'active' node, got: {}", results[0].node.id
+        );
+    }
+
+    #[test]
+    fn test_weighted_vote_no_majority_is_ambiguous() {
+        // Agent A (weight 0.4): active
+        // Agent B (weight 0.4): inactive
+        // Agent C (weight 0.2): active
+        // "active" group total = 0.6, "inactive" = 0.4, total = 1.0
+        // 0.6 > 0.5 → actually resolves. Let's make it fail:
+        // Agent A (0.4): active, Agent B (0.4): inactive, Agent C (0.2): pending
+        // No group > 0.5 → ambiguous
+        let mut weights = HashMap::new();
+        weights.insert("agent-a".to_string(), 0.4);
+        weights.insert("agent-b".to_string(), 0.4);
+        weights.insert("agent-c".to_string(), 0.2);
+
+        let pred_a = Predicate::new("status")
+            .with_args(vec![Term::ent("X"), Term::ent("active")]);
+        let pred_b = Predicate::new("status")
+            .with_args(vec![Term::ent("X"), Term::ent("inactive")]);
+        let pred_c = Predicate::new("status")
+            .with_args(vec![Term::ent("X"), Term::ent("pending")]);
+
+        let matches = vec![
+            make_result_with_provenance("n001", 0.5, pred_a, asserted_by("agent-a")),
+            make_result_with_provenance("n002", 0.5, pred_b, asserted_by("agent-b")),
+            make_result_with_provenance("n003", 0.5, pred_c, asserted_by("agent-c")),
+        ];
+
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights });
+        assert!(ambiguous, "no majority must be ambiguous");
+        assert!(results.is_empty(), "WeightedVote must not return result on no majority");
+    }
+
+    #[test]
+    fn test_weighted_vote_all_agree_resolves() {
+        // All agents agree → resolves (like Unanimous but via weight)
+        let mut weights = HashMap::new();
+        weights.insert("agent-a".to_string(), 0.5);
+        weights.insert("agent-b".to_string(), 0.3);
+
+        let pred = Predicate::new("status")
+            .with_args(vec![Term::ent("X"), Term::ent("active")]);
+
+        let matches = vec![
+            make_result_with_provenance("n001", 0.5, pred.clone(), asserted_by("agent-a")),
+            make_result_with_provenance("n002", 0.7, pred.clone(), asserted_by("agent-b")),
+        ];
+
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights });
+        assert!(!ambiguous, "all agree must resolve");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_weighted_vote_default_weight_for_unknown_principal() {
+        // Unknown principals get default weight 0.5
+        // Agent X (unknown, weight 0.5): active
+        // Agent Y (unknown, weight 0.5): inactive
+        // Neither > 0.5 → ambiguous
+        let weights = HashMap::new(); // empty → all use default 0.5
+
+        let pred_a = Predicate::new("status")
+            .with_args(vec![Term::ent("X"), Term::ent("active")]);
+        let pred_b = Predicate::new("status")
+            .with_args(vec![Term::ent("X"), Term::ent("inactive")]);
+
+        let matches = vec![
+            make_result_with_provenance("n001", 0.5, pred_a, asserted_by("unknown-x")),
+            make_result_with_provenance("n002", 0.5, pred_b, asserted_by("unknown-y")),
+        ];
+
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights });
+        assert!(ambiguous, "equal weights with disagreement must be ambiguous");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_weighted_vote_single_node_passes_through() {
+        // Single-node group should pass through regardless of policy
+        let weights = HashMap::new();
+        let pred = Predicate::new("status")
+            .with_args(vec![Term::ent("X"), Term::ent("active")]);
+
+        let matches = vec![
+            make_result_with_provenance("n001", 0.5, pred, asserted_by("agent-a")),
+        ];
+
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights });
+        assert!(!ambiguous);
+        assert_eq!(results.len(), 1);
     }
 }

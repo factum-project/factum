@@ -108,8 +108,8 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 ## M3+: Research 📋
 
 ### Confidence Feedback Loop 📋
-- 📋 `compute_reliability_table()` — aggregate `(provenance_type, model)` stats: total/active/retracted → observed accuracy. Uses existing `Extracted` mandatory `ModelRef` field.
-- 📋 `default_confidence_for_provenance()` auto-switch — when N≥10 data points exist for a `(provenance, model)` pair, use observed accuracy instead of policy constants. Cold start falls back to `calibration.rs` constants.
+- 📋 `compute_reliability_table()` — aggregate `(provenance_type, model, principal)` stats: total/active/retracted → observed accuracy. Uses existing `Extracted` mandatory `ModelRef` and `Asserted` `Principal` fields. The `principal` dimension enables per-agent reliability tracking in multi-agent scenarios (same model, different agent instances may have different accuracy).
+- 📋 `default_confidence_for_provenance()` auto-switch — when N≥10 data points exist for a `(provenance, model, principal)` triple, use observed accuracy instead of policy constants. Cold start falls back to `calibration.rs` constants. When principal is unknown or "system", falls back to `(provenance, model)` pair.
 - 📋 Retract reason classification — add optional `reason` parameter to retract: `"error"` / `"outdated"` / `"superseded"` / `"cleanup"`. Only `error` and `superseded` count against model reliability score.
 - 📋 `corroboration_count(predicate_hash)` — count independent `(principal, model)` pairs asserting the same canonical predicate. ≥2 pairs allows confidence above band ceiling. Content-addressed IDs naturally prevent same-pair double-counting.
 - 📋 Band clipping enforcement in `factum_assert` — reject or clamp `:conf` values exceeding provenance band, with corroboration check for exceptions. Currently emits warnings only (M2 behavior).

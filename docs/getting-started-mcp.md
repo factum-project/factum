@@ -193,4 +193,6 @@ cargo test -p factum-mcp
 ```
 
 For more detail, see the [LLM authoring guide](authoring-for-llms.md),
+[multi-agent usage guide](multi-agent-usage.md),
+[confidence calibration guide](confidence-calibration.md),
 [design rationale](design-rationale.md), and [roadmap](../ROADMAP.md).

@@ -29,7 +29,7 @@ pub struct ToolDefinition {
 pub struct FactumQueryParams {
     /// Factum-F S-expression query
     pub query: String,
-    /// Conflict policy: "latest", "authority", "unanimous"
+    /// Conflict policy: "latest", "authority", "unanimous", "weighted"
     #[serde(default)]
     pub policy: Option<String>,
     /// "As of" historical query (ISO 8601 datetime)
@@ -38,6 +38,10 @@ pub struct FactumQueryParams {
     /// Minimum confidence threshold
     #[serde(default)]
     pub min_confidence: Option<f32>,
+    /// Agent weights for "weighted" policy: { "agent-name": weight, ... }
+    /// Weights are 0.0–1.0. Agents not listed default to 0.5.
+    #[serde(default)]
+    pub agent_weights: Option<serde_json::Value>,
 }
 
 /// Parameters for factum_insert tool.
@@ -123,9 +127,9 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                     },
                     "policy": {
                         "type": "string",
-                        "enum": ["latest", "authority", "unanimous"],
+                        "enum": ["latest", "authority", "unanimous", "weighted"],
                         "default": "latest",
-                        "description": "Conflict resolution policy when multiple sources provide conflicting information"
+                        "description": "Conflict resolution policy. 'weighted' uses agent_weights for majority vote (multi-agent)."
                     },
                     "as_of": {
                         "type": "string",
@@ -138,6 +142,11 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                         "maximum": 1,
                         "default": 0,
                         "description": "Minimum confidence threshold"
+                    },
+                    "agent_weights": {
+                        "type": "object",
+                        "description": "Agent weights for 'weighted' policy. Keys are agent/principal names, values are 0.0–1.0. Agents not listed default to 0.5.",
+                        "additionalProperties": { "type": "number" }
                     }
                 },
                 "required": ["query"]

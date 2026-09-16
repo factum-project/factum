@@ -2,6 +2,7 @@
 //!
 //! Routes incoming MCP requests to the appropriate Factum runtime operations.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use serde_json;
 use smol_str::SmolStr;
@@ -57,6 +58,27 @@ fn generate_content_id(canonical_text: &str) -> String {
     canonical_text.hash(&mut hasher);
     let hash = hasher.finish();
     format!("auto-{:012x}", hash & 0xFFFFFFFFFFFF)
+}
+
+/// Parse the `agent_weights` JSON parameter into a `HashMap<String, f32>`.
+///
+/// Accepts a JSON object like `{"agent-a": 0.5, "agent-b": 0.3}`.
+/// Returns an empty map if the parameter is None or not an object.
+fn parse_agent_weights(value: &Option<serde_json::Value>) -> HashMap<String, f32> {
+    match value {
+        Some(serde_json::Value::Object(map)) => {
+            map.iter()
+                .filter_map(|(k, v)| {
+                    if let serde_json::Value::Number(n) = v {
+                        n.as_f64().map(|f| (k.clone(), f as f32))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+        _ => HashMap::new(),
+    }
 }
 
 /// The form in which query results are serialized.
@@ -242,6 +264,10 @@ impl McpHandler {
                 "latest" => ConflictPolicy::LatestWins,
                 "authority" => ConflictPolicy::HighestAuthority,
                 "unanimous" => ConflictPolicy::Unanimous,
+                "weighted" => {
+                    let weights = parse_agent_weights(&params.agent_weights);
+                    ConflictPolicy::WeightedVote { weights }
+                }
                 _ => ConflictPolicy::LatestWins,
             };
         }

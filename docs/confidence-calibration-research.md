@@ -395,7 +395,7 @@ knowledge, and how often was it later retracted/corrected?"*
    retains the full node including its `provenance` and `model` fields.
 
 2. **Aggregation query** (new, M3): `compute_reliability_table()` scans
-   all nodes, groups by `(provenance_type, model_name)`, and computes:
+   all nodes, groups by `(provenance_type, model_name, principal)`, and computes:
 
    ```rust
    struct ReliabilityStats {
@@ -406,9 +406,15 @@ knowledge, and how often was it later retracted/corrected?"*
    }
    ```
 
+   The `principal` dimension (from `Asserted { by }` or `Extracted { model.name }`)
+   enables per-agent reliability tracking in multi-agent scenarios. Same model,
+   different agent instances may exhibit different extraction accuracy. When
+   principal is unknown or `"system"`, falls back to `(provenance_type, model)`
+   pair aggregation.
+
 3. **Default value auto-switch** (new, M3): `default_confidence_for_provenance()`
-   checks if empirical data exists for the given `(provenance_type, model)`
-   pair. If N ≥ 10 (cold-start threshold), it returns the observed accuracy.
+   checks if empirical data exists for the given `(provenance_type, model, principal)`
+   triple. If N ≥ 10 (cold-start threshold), it returns the observed accuracy.
    Otherwise, it falls back to the §4.2 policy constants.
 
 4. **Retract reason classification** (new, M3): Not all retracts mean

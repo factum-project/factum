@@ -23,7 +23,10 @@
 //!    accumulate uncertainty. Verified rules (future Lean proofs) use
 //!    1.0 (no decay).
 //! 4. **Empirical reliability table (M3)**: Future upgrade to replace
-//!    constants with measured `(provenance × model)` accuracy data.
+//!    constants with measured `(provenance × model × principal)` accuracy data.
+//!    The `principal` dimension enables per-agent reliability tracking in
+//!    multi-agent scenarios — same model, different agent instances may
+//!    exhibit different extraction accuracy.
 
 use crate::types::{Confidence, Provenance};
 
@@ -37,9 +40,10 @@ pub const DEFAULT_RULE_RELIABILITY: f32 = 0.95;
 
 /// Cold-start threshold for empirical reliability table (M3).
 ///
-/// Below this many data points for a `(provenance, model)` pair,
+/// Below this many data points for a `(provenance, model, principal)` triple,
 /// the policy constants are used instead of observed accuracy.
 /// Prevents small-sample bias in the reliability estimate.
+/// When principal is unknown or "system", falls back to `(provenance, model)` pair.
 pub const EMPIRICAL_MIN_SAMPLES: usize = 10;
 
 /// Provenance-based default confidence (policy constants).
