@@ -27,7 +27,7 @@ pub mod permission;
 pub mod verifier;
 pub mod subscription;
 
-pub use store::FactumStore;
+pub use store::{FactumStore, StoreError, RetractResult};
 pub use storage::{StorageBackend, InMemoryBackend, StorageError, WriteOp};
 pub use query::{Query, QueryOptions, ResultSet, QueryError};
 pub use arbitration::{ConflictPolicy, ArbitrationResult};

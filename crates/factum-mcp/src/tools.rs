@@ -56,6 +56,11 @@ pub struct FactumInsertParams {
 pub struct FactumRetractParams {
     /// Node ID to retract
     pub node_id: String,
+    /// Maximum cascade depth (number of nodes to retract in the cascade).
+    /// Default: 100. If the cascade exceeds this limit, it is truncated
+    /// and the response includes `truncated: true`.
+    #[serde(default)]
+    pub max_cascade_depth: Option<usize>,
 }
 
 /// Parameters for factum_lookup tool.
@@ -168,13 +173,19 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "factum_retract".into(),
-            description: "Retract a node from the Factum graph. Retraction is a soft delete — the node is marked as retracted but not removed, preserving audit history. Derived nodes depending on the retracted node are cascade-retracted.".into(),
+            description: "Retract a node from the Factum graph. Retraction is a soft delete — the node is marked as retracted but not removed, preserving audit history. Derived nodes depending on the retracted node are cascade-retracted. The cascade depth is limited to prevent explosion in large knowledge bases.".into(),
             inputSchema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "node_id": {
                         "type": "string",
                         "description": "ID of the node to retract"
+                    },
+                    "max_cascade_depth": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 100,
+                        "description": "Maximum number of nodes to retract in the cascade. If exceeded, the cascade is truncated and 'truncated: true' is returned."
                     }
                 },
                 "required": ["node_id"]

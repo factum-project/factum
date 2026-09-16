@@ -40,7 +40,8 @@ fn store_error_to_jsonrpc(e: &factum_rt::store::StoreError) -> JsonRpcError {
         | factum_rt::store::StoreError::InvalidNode(_) => {
             JsonRpcError::invalid_params(e.to_string())
         }
-        factum_rt::store::StoreError::Storage(_) => {
+        factum_rt::store::StoreError::Storage(_)
+        | factum_rt::store::StoreError::CascadeLimitExceeded(_) => {
             JsonRpcError::internal(e.to_string())
         }
     }
@@ -368,11 +369,14 @@ impl McpHandler {
                 JsonRpcError::invalid_params(e.to_string())),
         };
 
-        match self.store.retract(&NodeId::new(params.node_id)) {
-            Ok(retracted) => {
+        let max_depth = params.max_cascade_depth.unwrap_or(100);
+        match self.store.retract_with_depth(&NodeId::new(params.node_id), max_depth) {
+            Ok(result) => {
                 let json = serde_json::json!({
-                    "retracted": retracted.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-                    "count": retracted.len(),
+                    "retracted": result.retracted.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                    "count": result.retracted.len(),
+                    "truncated": result.truncated,
+                    "depth_reached": result.depth_reached,
                 });
                 let tool_result = ToolResult::structured(json);
                 JsonRpcResponse::success(

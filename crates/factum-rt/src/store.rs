@@ -81,7 +81,30 @@ pub enum StoreError {
     InvalidNode(String),
     #[error("storage error: {0}")]
     Storage(String),
+    #[error("cascade depth limit exceeded: {0} nodes retracted, further retractions truncated")]
+    CascadeLimitExceeded(usize),
 }
+
+/// Result of a retract operation, including cascade information.
+#[derive(Debug, Clone)]
+pub struct RetractResult {
+    /// All node IDs that were retracted (including the root and cascade).
+    pub retracted: Vec<NodeId>,
+    /// True if the cascade was truncated because it exceeded the depth limit.
+    pub truncated: bool,
+    /// The maximum cascade depth reached.
+    pub depth_reached: usize,
+}
+
+impl RetractResult {
+    /// Number of nodes retracted.
+    pub fn count(&self) -> usize {
+        self.retracted.len()
+    }
+}
+
+/// Default maximum cascade depth for retraction.
+const DEFAULT_MAX_CASCADE_DEPTH: usize = 100;
 
 impl From<StorageError> for StoreError {
     fn from(e: StorageError) -> Self {
@@ -278,10 +301,63 @@ impl FactumStore {
     ///
     /// The node is marked as Retracted but NOT deleted.
     /// All downstream Derived nodes are cascade-retracted via deps_rev.
+    /// Uses the default maximum cascade depth of 100.
     pub fn retract(&self, id: &NodeId) -> Result<Vec<NodeId>, StoreError> {
+        let result = self.retract_with_depth(id, DEFAULT_MAX_CASCADE_DEPTH)?;
+        Ok(result.retracted)
+    }
+
+    /// Retract a node with a configurable maximum cascade depth.
+    ///
+    /// Returns a [`RetractResult`] with the full list of retracted node IDs
+    /// and a `truncated` flag indicating whether the cascade was cut short.
+    ///
+    /// A `truncated` result is NOT an error — all nodes up to the depth limit
+    /// are successfully retracted. The caller should check `truncated` and
+    /// decide whether to retry or alert.
+    pub fn retract_with_depth(&self, id: &NodeId, max_depth: usize) -> Result<RetractResult, StoreError> {
+        let mut all_retracted = Vec::new();
+        let mut depth_reached = 0usize;
+        let mut truncated = false;
+        self.retract_recursive(id, max_depth, 0, &mut all_retracted, &mut depth_reached, &mut truncated)?;
+
+        // Notify subscribers of the retraction (with full cascade list)
+        self.subscriptions.notify_retract(id, &all_retracted);
+
+        Ok(RetractResult {
+            retracted: all_retracted,
+            truncated,
+            depth_reached,
+        })
+    }
+
+    /// Internal recursive retraction with depth tracking.
+    fn retract_recursive(
+        &self,
+        id: &NodeId,
+        max_depth: usize,
+        current_depth: usize,
+        all_retracted: &mut Vec<NodeId>,
+        depth_reached: &mut usize,
+        truncated: &mut bool,
+    ) -> Result<(), StoreError> {
+        if current_depth > max_depth {
+            *truncated = true;
+            return Ok(());
+        }
+
+        if current_depth > *depth_reached {
+            *depth_reached = current_depth;
+        }
+
         // Get the node
         let node = self.backend.get_node(id)?
             .ok_or_else(|| StoreError::NotFound(id.to_string()))?;
+
+        // Skip if already retracted (prevents cycles)
+        if node.status == NodeStatus::Retracted {
+            return Ok(());
+        }
 
         // Mark as retracted
         let mut new_node = (*node).clone();
@@ -292,25 +368,34 @@ impl FactumStore {
 
         self.wal.write().push(WalEntry::Retract(id.clone()));
 
+        all_retracted.push(id.clone());
+
         // Cascade: find all nodes that depend on this one
         let dependents = self.deps_rev.read().get(id).cloned().unwrap_or_default();
 
-        let mut all_retracted = vec![id.clone()];
         for dep_id in &dependents {
             // Only cascade-retract Derived nodes
             let dep_node = self.backend.get_node(dep_id)?;
             if let Some(n) = dep_node {
                 if matches!(n.provenance, Provenance::Derived { .. }) && n.status == NodeStatus::Active {
-                    let mut further = self.retract(dep_id)?;
-                    all_retracted.append(&mut further);
+                    // Check if we're about to exceed depth
+                    if all_retracted.len() >= max_depth {
+                        *truncated = true;
+                        break;
+                    }
+                    self.retract_recursive(
+                        dep_id,
+                        max_depth,
+                        current_depth + 1,
+                        all_retracted,
+                        depth_reached,
+                        truncated,
+                    )?;
                 }
             }
         }
 
-        // Notify subscribers of the retraction (with full cascade list)
-        self.subscriptions.notify_retract(id, &all_retracted);
-
-        Ok(all_retracted)
+        Ok(())
     }
 
     // ─── Read Operations ───────────────────────────────
@@ -778,5 +863,123 @@ mod tests {
         assert!(result.is_err());
         // Neither should be inserted
         assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn test_retract_with_depth_limit_truncates() {
+        let store = FactumStore::with_seeds();
+
+        // Build a chain: n001 → n002 → n003 → n004 → n005
+        store.insert(make_node("n001", "base",
+            vec![Term::ent("X"), Term::ent("Y")])).unwrap();
+
+        for i in 2..=5 {
+            let prev = format!("n{:03}", i - 1);
+            let curr = format!("n{:03}", i);
+            let mut derived = make_node(&curr, "derived",
+                vec![Term::ent("A"), Term::ent("B")]);
+            derived.provenance = Provenance::Derived {
+                from: NodeId::new(prev.clone()),
+                rule: RuleId(SmolStr::new("r1")),
+            };
+            derived.deps.push(NodeId::new(prev));
+            store.insert(derived).unwrap();
+        }
+
+        // Retract n001 with max_depth=3 — should truncate
+        let result = store.retract_with_depth(&NodeId::new("n001"), 3).unwrap();
+        assert!(result.truncated);
+        assert!(result.retracted.len() <= 3);
+        assert!(result.depth_reached > 0);
+    }
+
+    #[test]
+    fn test_retract_with_depth_limit_no_truncation() {
+        let store = FactumStore::with_seeds();
+
+        // Build a small chain: n001 → n002
+        store.insert(make_node("n001", "base",
+            vec![Term::ent("X"), Term::ent("Y")])).unwrap();
+
+        let mut derived = make_node("n002", "derived",
+            vec![Term::ent("A"), Term::ent("B")]);
+        derived.provenance = Provenance::Derived {
+            from: NodeId::new("n001"),
+            rule: RuleId(SmolStr::new("r1")),
+        };
+        derived.deps.push(NodeId::new("n001"));
+        store.insert(derived).unwrap();
+
+        // Retract n001 with max_depth=100 — should not truncate
+        let result = store.retract_with_depth(&NodeId::new("n001"), 100).unwrap();
+        assert!(!result.truncated);
+        assert_eq!(result.retracted.len(), 2);
+    }
+
+    #[test]
+    fn test_retract_with_depth_zero() {
+        let store = FactumStore::with_seeds();
+
+        store.insert(make_node("n001", "base",
+            vec![Term::ent("X"), Term::ent("Y")])).unwrap();
+
+        // max_depth=1 means only the root node itself
+        let result = store.retract_with_depth(&NodeId::new("n001"), 1).unwrap();
+        assert_eq!(result.retracted.len(), 1);
+        assert!(!result.truncated); // only 1 node, no cascade needed
+    }
+
+    #[test]
+    fn test_retract_backward_compatible() {
+        let store = FactumStore::with_seeds();
+
+        // n001: base assertion
+        store.insert(make_node("n001", "instance-of",
+            vec![Term::ent("X"), Term::ent("Y")])).unwrap();
+
+        // n002: derived from n001
+        let mut derived = make_node("n002", "subsidiary-of",
+            vec![Term::ent("A"), Term::ent("B")]);
+        derived.provenance = Provenance::Derived {
+            from: NodeId::new("n001"),
+            rule: RuleId(SmolStr::new("r1")),
+        };
+        derived.deps.push(NodeId::new("n001"));
+        store.insert(derived).unwrap();
+
+        // Old retract() API still works
+        let retracted = store.retract(&NodeId::new("n001")).unwrap();
+        assert_eq!(retracted.len(), 2);
+    }
+
+    #[test]
+    fn test_retract_cycle_safe() {
+        // Test that a cycle in deps doesn't cause infinite recursion
+        let store = FactumStore::with_seeds();
+
+        // n001 depends on n002, n002 depends on n001 (shouldn't happen, but be safe)
+        let mut n1 = make_node("n001", "pred-a",
+            vec![Term::ent("X"), Term::ent("Y")]);
+        n1.provenance = Provenance::Derived {
+            from: NodeId::new("n002"),
+            rule: RuleId(SmolStr::new("r1")),
+        };
+        n1.deps.push(NodeId::new("n002"));
+
+        let mut n2 = make_node("n002", "pred-b",
+            vec![Term::ent("A"), Term::ent("B")]);
+        n2.provenance = Provenance::Derived {
+            from: NodeId::new("n001"),
+            rule: RuleId(SmolStr::new("r2")),
+        };
+        n2.deps.push(NodeId::new("n001"));
+
+        store.insert(n1).unwrap();
+        store.insert(n2).unwrap();
+
+        // Should not infinite loop — already-retracted check prevents cycles
+        let result = store.retract_with_depth(&NodeId::new("n001"), 100).unwrap();
+        assert!(!result.truncated);
+        assert_eq!(result.retracted.len(), 2);
     }
 }

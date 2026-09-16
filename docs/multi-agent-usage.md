@@ -244,3 +244,76 @@ No explicit coordination needed — the dependency graph handles propagation.
 6. **Don't use high `min_conf` on mixed-era knowledge**: See
    [Confidence Calibration Guide](confidence-calibration.md) §Mixed-Era
    Knowledge Bases for the old-node-conf-inflation issue.
+
+## Scaling to 10+ Agents
+
+When deploying Factum with many agents, additional considerations apply.
+
+### Trust tiers
+
+Classify agents into trust tiers and assign weights accordingly:
+
+| Tier | Weight | Examples |
+|------|--------|----------|
+| High trust | 0.7-1.0 | Verified extractors, formal verifiers, human-curated |
+| Medium trust | 0.3-0.6 | LLM extractors with known model accuracy |
+| Low trust | 0.1-0.2 | Unverified sources, experimental agents |
+
+With WeightedVote, a single high-trust agent can outvote multiple
+low-trust agents — preventing noise from overwhelming signal.
+
+### Cascade depth protection
+
+Always set `max_cascade_depth` when retracting in large knowledge bases:
+
+```json
+{"tool": "factum_retract", "arguments": {
+  "node_id": "auto-xxx",
+  "max_cascade_depth": 50
+}}
+```
+
+Check the `truncated` field in the response. If `true`, some downstream
+nodes were NOT retracted — investigate and retract them manually.
+
+**Recommended defaults**:
+- Small knowledge base (<100 nodes): 100 (default)
+- Medium (100-10K nodes): 50
+- Large (>10K nodes): 20
+
+### Garbage metadata defense
+
+In large-scale deployments, low-quality agents may produce noise. Defense
+in depth:
+
+1. **min_conf threshold**: Query with `min_conf: 0.5` to filter low-confidence
+   assertions from unreliable agents.
+
+2. **Permission isolation**: Assign low-trust agents a `public`-only
+   permission context. Their outputs are visible but cannot contaminate
+   `confidential` or `restricted` knowledge.
+
+3. **WeightedVote policy**: Use `weighted` instead of `latest` for queries
+   in multi-agent contexts. This ensures noise from many low-trust agents
+   doesn't override a single high-trust assertion.
+
+4. **Provenance audit**: Periodically query by principal to identify
+   agents producing retracted or low-confidence nodes:
+   ```
+   factum_search mode="stats" → check retracted ratio per source
+   ```
+
+### Write coordination
+
+With stdio transport (current), only one process can hold the RocksDB
+write lock. Patterns:
+
+- **Coordinator pattern**: One agent (or an external script) collects
+  facts from all agents and writes them via `factum_insert_batch`.
+- **Sequential writes**: Agents take turns writing, coordinated by an
+  external lock (file lock, Redis lock, etc.).
+- **Read-heavy pattern**: Most agents only query (read-only is safe
+  concurrently). Designate one writer agent.
+
+Future (ROADMAP M2): HTTP transport + MVCC will allow true concurrent
+multi-agent writes.

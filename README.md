@@ -42,7 +42,7 @@ Complementary: Mem0/Letta store and retrieve context; Factum stores auditable st
 - **Node 7-tuple**: Every knowledge node carries id, predicate, validity, provenance, confidence, authority, and permissions
 - **5-level provenance**: Verbatim / Summary / Extracted / Derived / Asserted — full audit chain
 - **Grammar-enforced model reference**: `Extracted` nodes MUST carry model + version — the parser rejects them if missing (not just a documentation convention)
-- **Cascade retraction**: Derived nodes auto-invalidate when upstream sources are retracted (via `deps_rev` reverse dependency graph)
+- **Cascade retraction**: Derived nodes auto-invalidate when upstream sources are retracted (via `deps_rev` reverse dependency graph); configurable depth limit prevents cascade explosion in large knowledge bases
 - **Conflict arbitration**: LatestWins / HighestAuthority / Unanimous / WeightedVote — returns `Ambiguous` when it cannot uniquely resolve
 - **Index-level permissions**: No post-query filtering — prevents aggregate leakage
 - **Lossless numerics**: All numbers use `Dec(i128, u8)` — zero floating-point error
