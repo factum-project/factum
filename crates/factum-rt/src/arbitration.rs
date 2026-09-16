@@ -99,19 +99,28 @@ pub enum ArbitrationResult {
 
 /// Arbitrate a set of matching query results.
 ///
-/// Groups results by their variable bindings, then applies the policy
-/// within each group. If a group cannot be uniquely resolved, marks
-/// the result set as ambiguous.
+/// Groups results so that nodes matching the same query pattern position
+/// (same head + same ground terms) are in the same group, then applies
+/// the policy within each group. If a group cannot be uniquely resolved,
+/// marks the result set as ambiguous.
+///
+/// The `query_pattern` is used to determine which positions are variables
+/// (contested) vs ground terms (shared). When `query_pattern` is `None`,
+/// falls back to grouping by binding values (legacy behavior, for
+/// backward compatibility with tests that call arbitrate directly).
 pub fn arbitrate(
     matches: Vec<QueryResult>,
     policy: &ConflictPolicy,
+    query_pattern: Option<&Predicate>,
 ) -> (Vec<QueryResult>, bool) {
     if matches.is_empty() {
         return (Vec::new(), false);
     }
 
-    // Group by binding signature (same variable → same value)
-    let groups = group_by_bindings(matches);
+    // Group by pattern structure (head + ground positions), not by
+    // variable binding values. This ensures that conflicting values
+    // for the same variable land in the same group for arbitration.
+    let groups = group_by_pattern(matches, query_pattern);
 
     let mut results = Vec::new();
     let mut ambiguous = false;
@@ -124,48 +133,60 @@ pub fn arbitrate(
 
         match policy {
             ConflictPolicy::LatestWins => {
-                // Sort by authority desc, then by validity start desc (most recent wins).
-                // Forever is treated as the least recent (earliest) validity,
-                // so a Window node always wins over a Forever node at the same authority.
-                let winner = group.iter()
-                    .max_by(|a, b| {
-                        a.node.authority.0
-                            .partial_cmp(&b.node.authority.0)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                            .then(validity_recency_cmp(&a.node.validity, &b.node.validity))
-                    });
-                if let Some(w) = winner {
-                    // Check for a tie on both authority and validity — if multiple
-                    // nodes have the same authority AND same validity start, we
-                    // cannot pick one and must mark ambiguous.
-                    let w_auth = w.node.authority.0;
-                    let w_validity = &w.node.validity;
-                    let tied: Vec<_> = group.iter()
-                        .filter(|r| {
-                            (r.node.authority.0 - w_auth).abs() < 0.001
-                            && validity_recency_cmp(&r.node.validity, w_validity)
-                                == std::cmp::Ordering::Equal
-                        })
-                        .collect();
-                    if tied.len() > 1 {
-                        ambiguous = true;
+                // Sub-group by canonical predicate so that nodes with different
+                // concrete predicates (e.g., different entities) are separate
+                // answers, while nodes with the same predicate (true conflicts)
+                // compete for the winner.
+                let sub_groups = sub_group_by_predicate(&group);
+                for sub in sub_groups {
+                    if sub.len() == 1 {
+                        results.push(sub.into_iter().next().unwrap());
+                        continue;
                     }
-                    results.push(w.clone());
+                    // Sort by authority desc, then by validity start desc.
+                    let winner = sub.iter()
+                        .max_by(|a, b| {
+                            a.node.authority.0
+                                .partial_cmp(&b.node.authority.0)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                                .then(validity_recency_cmp(&a.node.validity, &b.node.validity))
+                        });
+                    if let Some(w) = winner {
+                        let w_auth = w.node.authority.0;
+                        let w_validity = &w.node.validity;
+                        let tied: Vec<_> = sub.iter()
+                            .filter(|r| {
+                                (r.node.authority.0 - w_auth).abs() < 0.001
+                                && validity_recency_cmp(&r.node.validity, w_validity)
+                                    == std::cmp::Ordering::Equal
+                            })
+                            .collect();
+                        if tied.len() > 1 {
+                            ambiguous = true;
+                        }
+                        results.push(w.clone());
+                    }
                 }
             }
             ConflictPolicy::HighestAuthority => {
-                let max_auth = group.iter()
-                    .map(|r| r.node.authority.0)
-                    .fold(0.0f32, f32::max);
-                let winners: Vec<_> = group.iter()
-                    .filter(|r| (r.node.authority.0 - max_auth).abs() < 0.001)
-                    .collect();
-                if winners.len() == 1 {
-                    results.push(winners[0].clone());
-                } else {
-                    ambiguous = true;
-                    // Still include the first one, but mark as ambiguous
-                    results.push(winners[0].clone());
+                let sub_groups = sub_group_by_predicate(&group);
+                for sub in sub_groups {
+                    if sub.len() == 1 {
+                        results.push(sub.into_iter().next().unwrap());
+                        continue;
+                    }
+                    let max_auth = sub.iter()
+                        .map(|r| r.node.authority.0)
+                        .fold(0.0f32, f32::max);
+                    let winners: Vec<_> = sub.iter()
+                        .filter(|r| (r.node.authority.0 - max_auth).abs() < 0.001)
+                        .collect();
+                    if winners.len() == 1 {
+                        results.push(winners[0].clone());
+                    } else {
+                        ambiguous = true;
+                        results.push(winners[0].clone());
+                    }
                 }
             }
             ConflictPolicy::Unanimous => {
@@ -233,7 +254,99 @@ pub fn arbitrate(
     (results, ambiguous)
 }
 
-/// Group query results by their binding signature.
+/// Group query results for arbitration.
+///
+/// The key insight: arbitration should engage when **multiple nodes match
+/// the same query pattern** and could be considered conflicting answers.
+///
+/// We group by the **query pattern's ground structure** (head + ground
+/// argument positions + ground named args). Variable positions are
+/// excluded from the key, so that nodes with different values for the
+/// same variable position land in the same group.
+///
+/// This means:
+/// - `(revenue-trend @ACME-CORP ?trend)` matching `declining` and `growing`
+///   → both in group "revenue-trend|ent:ACME-CORP|?" → arbitration engages
+/// - `(instance-of ?x organization)` matching `ACME-CORP` and `APPLE`
+///   → both in group "instance-of|?|ent:organization" → arbitration engages
+///
+/// The second case is correct: if two agents both assert `(instance-of @X org)`
+/// and `(instance-of @X person)`, that IS a conflict. But if they assert
+/// different entities (`@ACME-CORP` vs `@APPLE`), the canonical predicate
+/// differs and the WeightedVote/Unanimous sub-grouping by predicate handles it.
+///
+/// For LatestWins/HighestAuthority, all nodes in the same group compete
+/// and the winner is selected by authority/validity. For multi-entity
+/// queries, this means the highest-authority node wins per ground pattern —
+/// which is the intended behavior (return the most authoritative answer).
+fn group_by_pattern(
+    matches: Vec<QueryResult>,
+    pattern: Option<&Predicate>,
+) -> Vec<(String, Vec<QueryResult>)> {
+    let Some(pat) = pattern else {
+        // Fallback: legacy binding-based grouping (for direct arbitrate() calls)
+        return group_by_bindings(matches);
+    };
+
+    // Extract the pattern's ground positions
+    let pat_head = match &pat.head {
+        PredicateHead::Name(n) => n.as_str(),
+        PredicateHead::Id(_) => "<morpheme-id>",
+    };
+
+    // Build the group key from head + ground (non-variable) arg positions.
+    // Variable positions are represented as "?" in the key (same for all
+    // nodes matching that pattern position).
+    let mut ground_key_parts: Vec<String> = vec![pat_head.to_string()];
+
+    for pat_arg in &pat.args {
+        match pat_arg {
+            Term::Var(_) => {
+                ground_key_parts.push("?".to_string());
+            }
+            _ => {
+                ground_key_parts.push(term_key(pat_arg));
+            }
+        }
+    }
+
+    // For named args: ground keys use the pattern's named arg keys
+    let mut named_keys: Vec<String> = vec![];
+    for (key, val) in &pat.named {
+        match val {
+            Term::Var(_) => named_keys.push(format!("{}=?", key)),
+            _ => named_keys.push(format!("{}={}", key, term_key(val))),
+        }
+    }
+    named_keys.sort();
+    ground_key_parts.extend(named_keys);
+
+    let group_key = ground_key_parts.join("|");
+
+    // All matches that share this pattern structure go in one group
+    let mut groups: HashMap<String, Vec<QueryResult>> = HashMap::new();
+    for m in matches {
+        groups
+            .entry(group_key.clone())
+            .or_default()
+            .push(m);
+    }
+    groups.into_iter().collect()
+}
+
+/// Sub-group results within a group by their canonical predicate.
+/// Nodes with the same predicate (true duplicates/conflicts) compete;
+/// nodes with different predicates (different facts) are separate answers.
+fn sub_group_by_predicate(group: &[QueryResult]) -> Vec<Vec<QueryResult>> {
+    let mut sub_groups: HashMap<String, Vec<QueryResult>> = HashMap::new();
+    for r in group {
+        let sig = predicate_signature(&r.node.predicate);
+        sub_groups.entry(sig).or_default().push(r.clone());
+    }
+    sub_groups.into_values().collect()
+}
+
+/// Group query results by their binding signature (legacy fallback).
 fn group_by_bindings(matches: Vec<QueryResult>) -> Vec<(String, Vec<QueryResult>)> {
     let mut groups: HashMap<String, Vec<QueryResult>> = HashMap::new();
     for m in matches {
@@ -343,7 +456,7 @@ mod tests {
             make_result("n003", 0.7, Predicate::new("p").with_args(vec![Term::ent("X")])),
         ];
 
-        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::LatestWins);
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::LatestWins, None);
         assert_eq!(results.len(), 1);
         assert!(!ambiguous);
         assert_eq!(results[0].node.id.as_str(), "n002"); // highest authority
@@ -371,7 +484,7 @@ mod tests {
             },
         );
 
-        let (results, ambiguous) = arbitrate(vec![older, newer], &ConflictPolicy::LatestWins);
+        let (results, ambiguous) = arbitrate(vec![older, newer], &ConflictPolicy::LatestWins, None);
         assert!(!ambiguous);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].node.id.as_str(), "n002"); // more recent validity wins
@@ -390,7 +503,7 @@ mod tests {
             },
         );
 
-        let (results, ambiguous) = arbitrate(vec![forever, window], &ConflictPolicy::LatestWins);
+        let (results, ambiguous) = arbitrate(vec![forever, window], &ConflictPolicy::LatestWins, None);
         assert!(!ambiguous);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].node.id.as_str(), "n002"); // Window beats Forever
@@ -407,7 +520,7 @@ mod tests {
         let a = make_result_with_validity("n001", 0.9, pred.clone(), v);
         let b = make_result_with_validity("n002", 0.9, pred.clone(), v);
 
-        let (results, ambiguous) = arbitrate(vec![a, b], &ConflictPolicy::LatestWins);
+        let (results, ambiguous) = arbitrate(vec![a, b], &ConflictPolicy::LatestWins, None);
         assert!(ambiguous, "same authority + same validity must be ambiguous");
         // Results still contains one entry (the winner), but ambiguous flag is set
         assert_eq!(results.len(), 1);
@@ -423,7 +536,7 @@ mod tests {
             make_result("n002", 0.9, pred.clone()),
         ];
 
-        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Custom);
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Custom, None);
         assert!(ambiguous, "Custom policy must mark ambiguous, not silently guess");
         assert!(results.is_empty(), "Custom policy must not push any result");
     }
@@ -434,7 +547,7 @@ mod tests {
         let pred = Predicate::new("p").with_args(vec![Term::ent("X")]);
         let matches = vec![make_result("n001", 0.5, pred.clone())];
 
-        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Custom);
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Custom, None);
         assert!(!ambiguous);
         assert_eq!(results.len(), 1);
     }
@@ -448,7 +561,7 @@ mod tests {
 
         // HighestAuthority on tie: returns a candidate (winners[0]) AND marks ambiguous.
         // This is deliberately different from Unanimous (which returns nothing).
-        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::HighestAuthority);
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::HighestAuthority, None);
         assert!(ambiguous);
         assert_eq!(results.len(), 1, "HighestAuthority must still return a candidate on tie");
     }
@@ -462,7 +575,7 @@ mod tests {
             make_result("n002", 0.9, pred.clone()),
         ];
 
-        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Unanimous);
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Unanimous, None);
         assert!(!ambiguous);
         assert_eq!(results.len(), 1);
     }
@@ -478,7 +591,7 @@ mod tests {
 
         // Unanimous on disagreement: marks ambiguous AND returns no result.
         // This is deliberately different from HighestAuthority (which returns a candidate).
-        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Unanimous);
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::Unanimous, None);
         assert!(ambiguous);
         assert!(results.is_empty(), "Unanimous must not return any result on disagreement");
     }
@@ -528,7 +641,7 @@ mod tests {
             make_result_with_provenance("n003", 0.5, pred_inactive.clone(), asserted_by("agent-c")),
         ];
 
-        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights });
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights }, None);
         assert!(!ambiguous, "majority should resolve");
         assert_eq!(results.len(), 1);
         // Winner should be one of the "active" nodes
@@ -565,7 +678,7 @@ mod tests {
             make_result_with_provenance("n003", 0.5, pred_c, asserted_by("agent-c")),
         ];
 
-        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights });
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights }, None);
         assert!(ambiguous, "no majority must be ambiguous");
         assert!(results.is_empty(), "WeightedVote must not return result on no majority");
     }
@@ -585,7 +698,7 @@ mod tests {
             make_result_with_provenance("n002", 0.7, pred.clone(), asserted_by("agent-b")),
         ];
 
-        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights });
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights }, None);
         assert!(!ambiguous, "all agree must resolve");
         assert_eq!(results.len(), 1);
     }
@@ -608,7 +721,7 @@ mod tests {
             make_result_with_provenance("n002", 0.5, pred_b, asserted_by("unknown-y")),
         ];
 
-        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights });
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights }, None);
         assert!(ambiguous, "equal weights with disagreement must be ambiguous");
         assert!(results.is_empty());
     }
@@ -624,7 +737,7 @@ mod tests {
             make_result_with_provenance("n001", 0.5, pred, asserted_by("agent-a")),
         ];
 
-        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights });
+        let (results, ambiguous) = arbitrate(matches, &ConflictPolicy::WeightedVote { weights }, None);
         assert!(!ambiguous);
         assert_eq!(results.len(), 1);
     }

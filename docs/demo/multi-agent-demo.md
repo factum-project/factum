@@ -11,15 +11,33 @@ Three agents (analyst-a, analyst-b, analyst-c) are researching the same
 company. They disagree on the company's financial health. The demo shows:
 
 1. **Independent assertions** — each agent writes facts with provenance
-2. **Conflict detection** — query reveals conflicting values
-3. **WeightedVote resolution** — weighted majority resolves the conflict
-4. **Ambiguous refusal** — when no majority exists, Factum refuses to answer
-5. **Cascade retraction** — retracting a source invalidates all derived facts
+2. **Corroboration** — same fact from different agents is detected, not rejected
+3. **Conflict detection** — query reveals conflicting values
+4. **WeightedVote resolution** — weighted majority resolves the conflict
+5. **Ambiguous refusal** — when no majority exists, Factum refuses to answer
+6. **Cascade retraction** — retracting a source invalidates all derived facts
 
 ## Prerequisites
 
 - Factum MCP server binary (`cargo build --release -p factum-mcp`)
 - Any MCP-compatible client (Claude Code, Cursor, or a script)
+
+## Important: parameter names
+
+The `factum_assert` tool uses `predicate` (not `text`) and `confidence`
+(accepts `conf` as an alias). Unknown fields are rejected (not silently
+ignored). Example of correct call:
+
+```json
+{
+  "tool": "factum_assert",
+  "arguments": {
+    "predicate": "(revenue-trend @ACME-CORP declining)",
+    "by": "analyst-a",
+    "confidence": 0.80
+  }
+}
+```
 
 ## Step-by-step script
 
@@ -29,31 +47,63 @@ company. They disagree on the company's financial health. The demo shows:
 
 ```json
 {"tool": "factum_assert", "arguments": {
-  "text": "(revenue-trend @ACME-CORP declining)",
+  "predicate": "(revenue-trend @ACME-CORP declining)",
   "by": "analyst-a",
-  "conf": 0.80
+  "confidence": 0.80
 }}
 ```
+
+Response:
+```json
+{
+  "action": "asserted",
+  "node_id": "auto-<12 hex chars>",
+  "predicate": "(revenue-trend @ACME-CORP declining)",
+  "status": "fact asserted with auto-generated ID"
+}
+```
+
+**Note the `node_id`** — you'll need it for Step 6. The actual ID is a
+content hash (e.g., `auto-9a3f7b2c1e8d`), not a placeholder.
 
 **Agent B** (junior analyst, lower trust) asserts revenue is growing:
 
 ```json
 {"tool": "factum_assert", "arguments": {
-  "text": "(revenue-trend @ACME-CORP growing)",
+  "predicate": "(revenue-trend @ACME-CORP growing)",
   "by": "analyst-b",
-  "conf": 0.60
+  "confidence": 0.60
 }}
 ```
+
+This succeeds (different predicate → different content hash → different ID).
 
 **Agent C** (sector specialist, medium trust) agrees with Agent A:
 
 ```json
 {"tool": "factum_assert", "arguments": {
-  "text": "(revenue-trend @ACME-CORP declining)",
+  "predicate": "(revenue-trend @ACME-CORP declining)",
   "by": "analyst-c",
-  "conf": 0.75
+  "confidence": 0.75
 }}
 ```
+
+Response:
+```json
+{
+  "action": "corroborated",
+  "node_id": "auto-<same hash as Agent A>",
+  "predicate": "(revenue-trend @ACME-CORP declining)",
+  "status": "fact already exists — your assertion is recorded as corroboration",
+  "corroborated_by": "analyst-a",
+  "your_principal": "analyst-c"
+}
+```
+
+Agent C's assertion returns `corroborated` (not an error). The content-addressed
+ID detects that the same fact was already asserted by a different principal.
+The hint explains how to add a separate node with different provenance if
+needed for WeightedVote.
 
 ### Step 2: Query reveals conflict
 
@@ -63,9 +113,8 @@ company. They disagree on the company's financial health. The demo shows:
 }}
 ```
 
-Response shows two conflicting values: `declining` (2 agents) and `growing`
-(1 agent). The default `latest` policy picks one, but doesn't reflect
-agent trust.
+With the default `latest` policy, the query returns the node with the highest
+authority. Two conflicting values exist: `declining` and `growing`.
 
 ### Step 3: WeightedVote resolution
 
@@ -81,23 +130,30 @@ agent trust.
 }}
 ```
 
-Result: `declining` wins (weight 0.8 vs 0.2 — 80% majority).
+Result: `declining` wins.
 
 How it works:
-- Agent A and C both asserted `declining` → combined weight 0.5 + 0.3 = 0.8
+- Agent A asserted `declining` → weight 0.5
 - Agent B asserted `growing` → weight 0.2
-- Total weight = 1.0, majority threshold = 0.5
-- 0.8 > 0.5 → `declining` wins
+- Agent C corroborated `declining` (but since it's the same content-addressed
+  node, only Agent A's provenance is stored in the node)
+- The `declining` group has weight 0.5, the `growing` group has weight 0.2
+- Total weight = 0.7, majority threshold = 0.35
+- 0.5 > 0.35 → `declining` wins
+
+**Note**: For multi-principal corroboration to count in WeightedVote, each
+agent must use `factum_insert` with a custom node ID (not `factum_assert`,
+which deduplicates by content hash). See the
+[multi-agent usage guide](../multi-agent-usage.md) §Explicit Corroboration.
 
 ### Step 4: Ambiguous refusal
 
-Now suppose Agent C changes their mind and also says `growing`:
+Now suppose Agent C changes their mind and also says `growing` (using
+`factum_insert` with a custom ID to add their own provenance):
 
 ```json
-{"tool": "factum_assert", "arguments": {
-  "text": "(revenue-trend @ACME-CORP growing)",
-  "by": "analyst-c",
-  "conf": 0.75
+{"tool": "factum_insert", "arguments": {
+  "node": "(node corr-c-001 :pred (revenue-trend @ACME-CORP growing) :src (asserted \"analyst-c\") :conf 0.75)"
 }}
 ```
 
@@ -121,23 +177,21 @@ rather than returning a potentially wrong result.
 ### Step 5: Cascade retraction
 
 Agent A's original assertion was based on an earnings report that turned
-out to be erroneous. Retracting the source fact cascades to all derived
-facts:
-
-First, Agent A wrote a derived fact based on the revenue trend:
+out to be erroneous. First, a derived fact was created based on the
+revenue trend (use the actual `node_id` from Step 1):
 
 ```json
 {"tool": "factum_insert", "arguments": {
-  "node": "(node n-risk-001 :pred (risk-level @ACME-CORP high) :src (derived auto-aaa-001 \"rule-revenue-decline\") :deps [auto-aaa-001] :conf 0.70)"
+  "node": "(node n-risk-001 :pred (risk-level @ACME-CORP high) :src (derived auto-<actual-id-from-step-1> \"rule-revenue-decline\") :deps [auto-<actual-id-from-step-1>] :conf 0.70)"
 }}
 ```
 
-Now retract the source:
+Now retract the source (replace `auto-xxx` with the actual ID from Step 1):
 
 ```json
 {"tool": "factum_retract", "arguments": {
-  "node_id": "auto-aaa-001",
-  "max_cascade_depth": 50
+  "node_id": "auto-<actual-id-from-step-1>",
+  "max_cascade_nodes": 50
 }}
 ```
 
@@ -145,28 +199,27 @@ Response:
 
 ```json
 {
-  "retracted": ["auto-aaa-001", "n-risk-001"],
+  "retracted": ["auto-<actual-id>", "n-risk-001"],
   "count": 2,
   "truncated": false,
   "depth_reached": 1
 }
 ```
 
-Both the source fact and the derived risk assessment are retracted —
-across all agents. The `truncated: false` confirms the cascade completed
-within the depth limit.
+Both the source fact and the derived risk assessment are retracted.
+The `truncated: false` confirms the cascade completed within the node limit.
 
 ## What this demo proves
 
 | Capability | Demonstrated in |
 |------------|----------------|
 | Provenance tracking | Steps 1-2: each fact shows which agent wrote it |
-| Content-addressed dedup | Step 1: Agent C's duplicate assertion gets same ID |
+| Corroboration detection | Step 1: Agent C's same-fact assertion returns `corroborated` |
 | Conflict detection | Step 2: query shows conflicting values |
 | WeightedVote arbitration | Step 3: weighted majority resolves conflict |
 | Ambiguous refusal | Step 4: Factum refuses when no majority |
 | Cascade retraction | Step 5: source error propagates to derived facts |
-| Cascade depth limit | Step 5: `max_cascade_depth` prevents explosion |
+| Cascade node limit | Step 5: `max_cascade_nodes` prevents explosion |
 
 ## Scaling notes
 

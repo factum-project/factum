@@ -56,11 +56,11 @@ pub struct FactumInsertParams {
 pub struct FactumRetractParams {
     /// Node ID to retract
     pub node_id: String,
-    /// Maximum cascade depth (number of nodes to retract in the cascade).
-    /// Default: 100. If the cascade exceeds this limit, it is truncated
-    /// and the response includes `truncated: true`.
+    /// Maximum number of nodes to retract in the cascade (including the
+    /// root node). Default: 100. If the cascade exceeds this limit,
+    /// it is truncated and the response includes `truncated: true`.
     #[serde(default)]
-    pub max_cascade_depth: Option<usize>,
+    pub max_cascade_nodes: Option<usize>,
 }
 
 /// Parameters for factum_lookup tool.
@@ -106,14 +106,16 @@ pub struct FactumSearchParams {
 
 /// Parameters for factum_assert tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactumAssertParams {
     /// Predicate S-expression, e.g. "(version @FACTUM-PROJECT \"0.1.3\")"
     pub predicate: String,
     /// Who is asserting this fact (default: "system")
     #[serde(default)]
     pub by: Option<String>,
-    /// Confidence level 0.0–1.0 (default: 1.0)
-    #[serde(default)]
+    /// Confidence level 0.0–1.0. If omitted, a provenance-based default
+    /// is used (Asserted=0.60, Extracted=0.80, etc.).
+    #[serde(default, alias = "conf")]
     pub confidence: Option<f32>,
 }
 
@@ -173,7 +175,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "factum_retract".into(),
-            description: "Retract a node from the Factum graph. Retraction is a soft delete — the node is marked as retracted but not removed, preserving audit history. Derived nodes depending on the retracted node are cascade-retracted. The cascade depth is limited to prevent explosion in large knowledge bases.".into(),
+            description: "Retract a node from the Factum graph. Retraction is a soft delete — the node is marked as retracted but not removed, preserving audit history. Derived nodes depending on the retracted node are cascade-retracted. The cascade is limited to a configurable number of nodes to prevent explosion in large knowledge bases.".into(),
             inputSchema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -181,11 +183,11 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                         "type": "string",
                         "description": "ID of the node to retract"
                     },
-                    "max_cascade_depth": {
+                    "max_cascade_nodes": {
                         "type": "integer",
                         "minimum": 1,
                         "default": 100,
-                        "description": "Maximum number of nodes to retract in the cascade. If exceeded, the cascade is truncated and 'truncated: true' is returned."
+                        "description": "Maximum number of nodes to retract in the cascade (including root). If exceeded, the cascade is truncated and 'truncated: true' is returned."
                     }
                 },
                 "required": ["node_id"]

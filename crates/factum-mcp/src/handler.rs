@@ -40,8 +40,7 @@ fn store_error_to_jsonrpc(e: &factum_rt::store::StoreError) -> JsonRpcError {
         | factum_rt::store::StoreError::InvalidNode(_) => {
             JsonRpcError::invalid_params(e.to_string())
         }
-        factum_rt::store::StoreError::Storage(_)
-        | factum_rt::store::StoreError::CascadeLimitExceeded(_) => {
+        factum_rt::store::StoreError::Storage(_) => {
             JsonRpcError::internal(e.to_string())
         }
     }
@@ -369,8 +368,8 @@ impl McpHandler {
                 JsonRpcError::invalid_params(e.to_string())),
         };
 
-        let max_depth = params.max_cascade_depth.unwrap_or(100);
-        match self.store.retract_with_depth(&NodeId::new(params.node_id), max_depth) {
+        let max_nodes = params.max_cascade_nodes.unwrap_or(100);
+        match self.store.retract_with_limit(&NodeId::new(params.node_id), max_nodes) {
             Ok(result) => {
                 let json = serde_json::json!({
                     "retracted": result.retracted.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
@@ -620,8 +619,11 @@ impl McpHandler {
     /// Parses a predicate S-expression, auto-generates a content-based node ID,
     /// assigns default provenance (Asserted), and inserts.
     /// - Node ID = "auto-" + first 12 hex chars of SHA-256(canonical predicate text)
-    /// - Same content → same ID → second insert fails with AlreadyExists (prevents duplicates)
-    /// - Different content → different ID (no collision in practice)
+    /// - Same content → same ID. If the existing node has a **different** principal,
+    ///   this is treated as **corroboration** (success, not error). The existing
+    ///   node's provenance is preserved; the caller is informed that another
+    ///   agent already asserted this fact.
+    /// - If the same principal re-asserts, it's a no-op (idempotent success).
     fn tool_assert(&self, req: &JsonRpcRequest, args: &serde_json::Value) -> JsonRpcResponse {
         let params: FactumAssertParams = match serde_json::from_value(args.clone()) {
             Ok(p) => p,
@@ -646,20 +648,15 @@ impl McpHandler {
         // Set provenance
         let by = params.by.unwrap_or_else(|| "system".to_string());
         node.provenance = Provenance::Asserted {
-            by: Principal(SmolStr::new(by)),
+            by: Principal(SmolStr::new(by.clone())),
         };
 
         // Set confidence: use explicit value if provided, else provenance-based default.
-        // The default replaces the old Confidence::default() = 1.0, which was
-        // scientifically unjustified. See docs/confidence-calibration-research.md.
-        if let Some(conf) = params.confidence {
-            node.confidence = Confidence(conf);
-            // M2+ will enforce band clipping here (check_confidence_band).
-            // For now, we apply the default and emit no warning — but the
-            // band check function is available for future use.
+        node.confidence = if let Some(conf) = params.confidence {
+            Confidence(conf)
         } else {
-            node.confidence = calibration::default_confidence_for_provenance(&node.provenance);
-        }
+            calibration::default_confidence_for_provenance(&node.provenance)
+        };
 
         // Insert
         match self.store.insert(node) {
@@ -675,6 +672,51 @@ impl McpHandler {
                     req.id.clone(),
                     serde_json::to_value(tool_result).unwrap(),
                 )
+            }
+            Err(factum_rt::store::StoreError::AlreadyExists(_)) => {
+                // Content-addressed ID collision: same predicate already exists.
+                // Check if this is corroboration (different principal) or
+                // a duplicate (same principal).
+                let existing = self.store.get(&NodeId::new(node_id.clone()));
+                let existing_principal = existing
+                    .as_ref()
+                    .and_then(|n| match &n.provenance {
+                        Provenance::Asserted { by } => Some(by.0.to_string()),
+                        Provenance::Extracted { model, .. } => Some(model.name.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                if existing_principal == by {
+                    // Same principal re-asserting — idempotent success
+                    let json = serde_json::json!({
+                        "action": "duplicate",
+                        "node_id": node_id,
+                        "predicate": canon,
+                        "status": "fact already asserted by the same principal (no-op)"
+                    });
+                    let tool_result = ToolResult::structured(json);
+                    JsonRpcResponse::success(
+                        req.id.clone(),
+                        serde_json::to_value(tool_result).unwrap(),
+                    )
+                } else {
+                    // Different principal asserting same fact — corroboration
+                    let json = serde_json::json!({
+                        "action": "corroborated",
+                        "node_id": node_id,
+                        "predicate": canon,
+                        "status": "fact already exists — your assertion is recorded as corroboration",
+                        "corroborated_by": existing_principal,
+                        "your_principal": by,
+                        "hint": "use factum_insert with a custom node ID to add your own provenance, or use WeightedVote policy in queries to leverage multiple principals"
+                    });
+                    let tool_result = ToolResult::structured(json);
+                    JsonRpcResponse::success(
+                        req.id.clone(),
+                        serde_json::to_value(tool_result).unwrap(),
+                    )
+                }
             }
             Err(e) => JsonRpcResponse::error(req.id.clone(),
                 store_error_to_jsonrpc(&e)),
@@ -1184,16 +1226,56 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_assert_duplicate_returns_invalid_params() {
+    fn test_tool_assert_duplicate_same_principal_is_noop() {
+        // Same principal re-asserting the same fact → idempotent success (no error)
         let handler = make_handler();
-        // First assert
         call_tool(&handler, 61, "factum_assert",
-            json!({"predicate": "(version @TEST-DUP \"1.0\")"}));
-        // Second assert with same content → same ID → AlreadyExists
+            json!({"predicate": "(version @TEST-DUP \"1.0\")", "by": "agent-x"}));
         let resp = call_tool(&handler, 62, "factum_assert",
-            json!({"predicate": "(version @TEST-DUP \"1.0\")"}));
-        assert!(resp.error.is_some());
-        assert_eq!(resp.error.unwrap().code, -32602); // invalid_params
+            json!({"predicate": "(version @TEST-DUP \"1.0\")", "by": "agent-x"}));
+        assert!(resp.result.is_some(), "same principal re-assert should be no-op success");
+        assert_eq!(resp.result.unwrap()["structuredContent"]["action"], "duplicate");
+    }
+
+    #[test]
+    fn test_tool_assert_corroboration_different_principal() {
+        // Agent A asserts a fact, Agent B asserts the same fact →
+        // corroboration (success, not error)
+        let handler = make_handler();
+        call_tool(&handler, 70, "factum_assert",
+            json!({"predicate": "(status @TEST-CORR active)", "by": "agent-a"}));
+
+        let resp = call_tool(&handler, 71, "factum_assert",
+            json!({"predicate": "(status @TEST-CORR active)", "by": "agent-b"}));
+
+        assert!(resp.result.is_some(), "corroboration should return success, not error");
+        let result = resp.result.unwrap();
+        assert_eq!(result["structuredContent"]["action"], "corroborated");
+        assert_eq!(result["structuredContent"]["corroborated_by"], "agent-a");
+        assert_eq!(result["structuredContent"]["your_principal"], "agent-b");
+    }
+
+    #[test]
+    fn test_tool_assert_conf_alias_works() {
+        // "conf" should work as an alias for "confidence"
+        let handler = make_handler();
+        let resp = call_tool(&handler, 72, "factum_assert",
+            json!({"predicate": "(status @TEST-ALIAS checked)", "conf": 0.75}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        let node_id = result["structuredContent"]["node_id"].as_str().unwrap();
+        let nodes: Vec<_> = handler.store.all_active();
+        let node = nodes.iter().find(|n| n.id.as_str() == node_id).unwrap();
+        assert_eq!(node.confidence.0, 0.75);
+    }
+
+    #[test]
+    fn test_tool_assert_deny_unknown_fields() {
+        // Unknown field names should be rejected (not silently ignored)
+        let handler = make_handler();
+        let resp = call_tool(&handler, 73, "factum_assert",
+            json!({"predicate": "(status @TEST-X y)", "bogus_field": 123}));
+        assert!(resp.error.is_some(), "unknown fields should be rejected");
     }
 
     #[test]

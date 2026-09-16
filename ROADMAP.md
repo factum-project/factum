@@ -57,9 +57,9 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 - ✅ `batch_write` for atomic multi-node writes (RocksDB WriteBatch)
 - ✅ Persistence verified: reopen database retains all data (12 tests passing)
 - ✅ Cascade retraction via reverse dependency graph (`deps_rev`)
-- ✅ Cascade depth limit (`retract_with_depth` with `max_cascade_depth`, default 100) — prevents cascade explosion in large knowledge bases
+- ✅ Cascade node limit (`retract_with_limit` with `max_cascade_nodes`, default 100) — prevents cascade explosion in large knowledge bases
 - ✅ `by_validity` BTreeMap index used for temporal queries (range query, not full scan)
-- ✅ Conflict arbitration with `Ambiguous` refusal (LatestWins, HighestAuthority, Unanimous, Custom)
+- ✅ Conflict arbitration with `Ambiguous` refusal (LatestWins, HighestAuthority, Unanimous, WeightedVote, Custom) — pattern-aware grouping ensures value conflicts trigger arbitration
 - 📋 MVCC optimistic concurrency with merge/abort policy
 
 ### MCP Integration

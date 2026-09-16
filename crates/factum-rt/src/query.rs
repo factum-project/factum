@@ -124,8 +124,14 @@ impl FactumStore {
             }
         }
 
-        // 4. Conflict arbitration
-        let (arbitrated, ambiguous) = crate::arbitration::arbitrate(matches, &options.policy);
+        // 4. Conflict arbitration — pass the query pattern so that
+        //    conflicting values for the same variable position are
+        //    grouped together and arbitration can engage.
+        let (arbitrated, ambiguous) = crate::arbitration::arbitrate(
+            matches,
+            &options.policy,
+            Some(&q.pattern),
+        );
 
         Ok(ResultSet { results: arbitrated, ambiguous })
     }
@@ -300,5 +306,126 @@ mod tests {
         );
         let results = store.query(&q, &QueryOptions::default()).unwrap();
         assert_eq!(results.results.len(), 0);
+    }
+
+    // ── Regression: value conflicts must trigger arbitration ──
+    // Before the fix, group_by_bindings split conflicting values into
+    // separate groups (one per binding), so arbitration never engaged
+    // for the most common conflict type: two agents writing different
+    // values for the same attribute.
+    //
+    // WeightedVote and Unanimous detect value conflicts because they
+    // sub-group by predicate signature within each pattern group.
+    // LatestWins sub-groups by predicate too, so different values return
+    // as separate results (no conflict resolution). To resolve value
+    // conflicts, use WeightedVote or Unanimous.
+
+    #[test]
+    fn test_value_conflict_triggers_weighted_vote() {
+        // Agent A (weight 0.5): active
+        // Agent B (weight 0.2): inactive
+        // "active" group has 0.5/(0.5+0.2) = 71% > 50% → resolved
+        let store = FactumStore::with_seeds();
+
+        let mut n1 = Node::new("n001",
+            Predicate::new("status")
+                .with_args(vec![Term::ent("X"), Term::ent("active")]));
+        n1.provenance = Provenance::Asserted { by: Principal(SmolStr::new("agent-a")) };
+        n1.permissions = PermissionTag::PUBLIC;
+        store.insert(n1).unwrap();
+
+        let mut n2 = Node::new("n002",
+            Predicate::new("status")
+                .with_args(vec![Term::ent("X"), Term::ent("inactive")]));
+        n2.provenance = Provenance::Asserted { by: Principal(SmolStr::new("agent-b")) };
+        n2.permissions = PermissionTag::PUBLIC;
+        store.insert(n2).unwrap();
+
+        let mut weights = std::collections::HashMap::new();
+        weights.insert("agent-a".to_string(), 0.5);
+        weights.insert("agent-b".to_string(), 0.2);
+
+        let q = Query::new(
+            Predicate::new("status")
+                .with_args(vec![Term::ent("X"), Term::var("s")])
+        );
+        let opts = QueryOptions {
+            policy: ConflictPolicy::WeightedVote { weights },
+            ..Default::default()
+        };
+
+        let results = store.query(&q, &opts).unwrap();
+        // Before fix: 2 results, not ambiguous. After fix: 1 result, resolved.
+        assert_eq!(results.results.len(), 1, "WeightedVote must resolve value conflict");
+        assert!(!results.ambiguous, "majority should resolve");
+        // Winner should be "active" (agent-a has majority weight)
+        let winner_pred = &results.results[0].node.predicate;
+        assert_eq!(winner_pred.args[1], Term::ent("active"));
+    }
+
+    #[test]
+    fn test_value_conflict_weighted_vote_no_majority_is_ambiguous() {
+        // Agent A (weight 0.5): active
+        // Agent B (weight 0.5): inactive
+        // Neither > 50% → ambiguous, refuse to answer
+        let store = FactumStore::with_seeds();
+
+        let mut n1 = Node::new("n001",
+            Predicate::new("status")
+                .with_args(vec![Term::ent("X"), Term::ent("active")]));
+        n1.provenance = Provenance::Asserted { by: Principal(SmolStr::new("agent-a")) };
+        n1.permissions = PermissionTag::PUBLIC;
+        store.insert(n1).unwrap();
+
+        let mut n2 = Node::new("n002",
+            Predicate::new("status")
+                .with_args(vec![Term::ent("X"), Term::ent("inactive")]));
+        n2.provenance = Provenance::Asserted { by: Principal(SmolStr::new("agent-b")) };
+        n2.permissions = PermissionTag::PUBLIC;
+        store.insert(n2).unwrap();
+
+        let mut weights = std::collections::HashMap::new();
+        weights.insert("agent-a".to_string(), 0.5);
+        weights.insert("agent-b".to_string(), 0.5);
+
+        let q = Query::new(
+            Predicate::new("status")
+                .with_args(vec![Term::ent("X"), Term::var("s")])
+        );
+        let opts = QueryOptions {
+            policy: ConflictPolicy::WeightedVote { weights },
+            ..Default::default()
+        };
+
+        let results = store.query(&q, &opts).unwrap();
+        assert!(results.ambiguous, "equal weights must be ambiguous");
+        assert!(results.results.is_empty(), "WeightedVote must refuse on no majority");
+    }
+
+    #[test]
+    fn test_value_conflict_unanimous_marks_ambiguous() {
+        // Two different values → Unanimous should mark ambiguous and return nothing
+        let store = FactumStore::with_seeds();
+        store.insert(Node::new("n001",
+            Predicate::new("status")
+                .with_args(vec![Term::ent("X"), Term::ent("active")]))
+            .with_permissions(PermissionTag::PUBLIC)).unwrap();
+        store.insert(Node::new("n002",
+            Predicate::new("status")
+                .with_args(vec![Term::ent("X"), Term::ent("inactive")]))
+            .with_permissions(PermissionTag::PUBLIC)).unwrap();
+
+        let q = Query::new(
+            Predicate::new("status")
+                .with_args(vec![Term::ent("X"), Term::var("s")])
+        );
+        let opts = QueryOptions {
+            policy: ConflictPolicy::Unanimous,
+            ..Default::default()
+        };
+
+        let results = store.query(&q, &opts).unwrap();
+        assert!(results.ambiguous, "Unanimous must detect value conflict");
+        assert!(results.results.is_empty(), "Unanimous must refuse on disagreement");
     }
 }

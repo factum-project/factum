@@ -81,8 +81,6 @@ pub enum StoreError {
     InvalidNode(String),
     #[error("storage error: {0}")]
     Storage(String),
-    #[error("cascade depth limit exceeded: {0} nodes retracted, further retractions truncated")]
-    CascadeLimitExceeded(usize),
 }
 
 /// Result of a retract operation, including cascade information.
@@ -90,9 +88,9 @@ pub enum StoreError {
 pub struct RetractResult {
     /// All node IDs that were retracted (including the root and cascade).
     pub retracted: Vec<NodeId>,
-    /// True if the cascade was truncated because it exceeded the depth limit.
+    /// True if the cascade was truncated because it exceeded the node limit.
     pub truncated: bool,
-    /// The maximum cascade depth reached.
+    /// The maximum cascade depth reached (number of recursion levels).
     pub depth_reached: usize,
 }
 
@@ -103,8 +101,8 @@ impl RetractResult {
     }
 }
 
-/// Default maximum cascade depth for retraction.
-const DEFAULT_MAX_CASCADE_DEPTH: usize = 100;
+/// Default maximum number of nodes to retract in a cascade.
+const DEFAULT_MAX_CASCADE_NODES: usize = 100;
 
 impl From<StorageError> for StoreError {
     fn from(e: StorageError) -> Self {
@@ -301,25 +299,27 @@ impl FactumStore {
     ///
     /// The node is marked as Retracted but NOT deleted.
     /// All downstream Derived nodes are cascade-retracted via deps_rev.
-    /// Uses the default maximum cascade depth of 100.
+    /// Uses the default maximum cascade node count of 100.
     pub fn retract(&self, id: &NodeId) -> Result<Vec<NodeId>, StoreError> {
-        let result = self.retract_with_depth(id, DEFAULT_MAX_CASCADE_DEPTH)?;
+        let result = self.retract_with_limit(id, DEFAULT_MAX_CASCADE_NODES)?;
         Ok(result.retracted)
     }
 
-    /// Retract a node with a configurable maximum cascade depth.
+    /// Retract a node with a configurable maximum number of cascade nodes.
     ///
-    /// Returns a [`RetractResult`] with the full list of retracted node IDs
-    /// and a `truncated` flag indicating whether the cascade was cut short.
+    /// `max_nodes` limits the total number of nodes that can be retracted
+    /// in a single cascade (including the root node). If the cascade
+    /// exceeds this limit, it is truncated and `truncated: true` is
+    /// returned. All nodes up to the limit are successfully retracted.
     ///
-    /// A `truncated` result is NOT an error — all nodes up to the depth limit
-    /// are successfully retracted. The caller should check `truncated` and
-    /// decide whether to retry or alert.
-    pub fn retract_with_depth(&self, id: &NodeId, max_depth: usize) -> Result<RetractResult, StoreError> {
+    /// This is a **node count** limit, not a recursion depth limit.
+    /// A cascade with depth 2 but 200 dependents will be truncated at
+    /// `max_nodes`, protecting against fan-out explosion.
+    pub fn retract_with_limit(&self, id: &NodeId, max_nodes: usize) -> Result<RetractResult, StoreError> {
         let mut all_retracted = Vec::new();
         let mut depth_reached = 0usize;
         let mut truncated = false;
-        self.retract_recursive(id, max_depth, 0, &mut all_retracted, &mut depth_reached, &mut truncated)?;
+        self.retract_recursive(id, max_nodes, 0, &mut all_retracted, &mut depth_reached, &mut truncated)?;
 
         // Notify subscribers of the retraction (with full cascade list)
         self.subscriptions.notify_retract(id, &all_retracted);
@@ -331,17 +331,22 @@ impl FactumStore {
         })
     }
 
-    /// Internal recursive retraction with depth tracking.
+    /// Internal recursive retraction with node count limit.
+    ///
+    /// `max_nodes` limits the total number of nodes retracted.
+    /// `current_depth` tracks recursion depth for reporting.
     fn retract_recursive(
         &self,
         id: &NodeId,
-        max_depth: usize,
+        max_nodes: usize,
         current_depth: usize,
         all_retracted: &mut Vec<NodeId>,
         depth_reached: &mut usize,
         truncated: &mut bool,
     ) -> Result<(), StoreError> {
-        if current_depth > max_depth {
+        // Node count limit check — this is the effective guard against
+        // cascade explosion (both deep chains and wide fan-out).
+        if all_retracted.len() >= max_nodes {
             *truncated = true;
             return Ok(());
         }
@@ -378,14 +383,14 @@ impl FactumStore {
             let dep_node = self.backend.get_node(dep_id)?;
             if let Some(n) = dep_node {
                 if matches!(n.provenance, Provenance::Derived { .. }) && n.status == NodeStatus::Active {
-                    // Check if we're about to exceed depth
-                    if all_retracted.len() >= max_depth {
+                    // Check if we're about to exceed the node count limit
+                    if all_retracted.len() >= max_nodes {
                         *truncated = true;
                         break;
                     }
                     self.retract_recursive(
                         dep_id,
-                        max_depth,
+                        max_nodes,
                         current_depth + 1,
                         all_retracted,
                         depth_reached,
@@ -866,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn test_retract_with_depth_limit_truncates() {
+    fn test_retract_with_node_limit_truncates() {
         let store = FactumStore::with_seeds();
 
         // Build a chain: n001 → n002 → n003 → n004 → n005
@@ -887,14 +892,14 @@ mod tests {
         }
 
         // Retract n001 with max_depth=3 — should truncate
-        let result = store.retract_with_depth(&NodeId::new("n001"), 3).unwrap();
+        let result = store.retract_with_limit(&NodeId::new("n001"), 3).unwrap();
         assert!(result.truncated);
         assert!(result.retracted.len() <= 3);
         assert!(result.depth_reached > 0);
     }
 
     #[test]
-    fn test_retract_with_depth_limit_no_truncation() {
+    fn test_retract_with_node_limit_no_truncation() {
         let store = FactumStore::with_seeds();
 
         // Build a small chain: n001 → n002
@@ -911,20 +916,20 @@ mod tests {
         store.insert(derived).unwrap();
 
         // Retract n001 with max_depth=100 — should not truncate
-        let result = store.retract_with_depth(&NodeId::new("n001"), 100).unwrap();
+        let result = store.retract_with_limit(&NodeId::new("n001"), 100).unwrap();
         assert!(!result.truncated);
         assert_eq!(result.retracted.len(), 2);
     }
 
     #[test]
-    fn test_retract_with_depth_zero() {
+    fn test_retract_with_node_limit_one() {
         let store = FactumStore::with_seeds();
 
         store.insert(make_node("n001", "base",
             vec![Term::ent("X"), Term::ent("Y")])).unwrap();
 
         // max_depth=1 means only the root node itself
-        let result = store.retract_with_depth(&NodeId::new("n001"), 1).unwrap();
+        let result = store.retract_with_limit(&NodeId::new("n001"), 1).unwrap();
         assert_eq!(result.retracted.len(), 1);
         assert!(!result.truncated); // only 1 node, no cascade needed
     }
@@ -978,7 +983,7 @@ mod tests {
         store.insert(n2).unwrap();
 
         // Should not infinite loop — already-retracted check prevents cycles
-        let result = store.retract_with_depth(&NodeId::new("n001"), 100).unwrap();
+        let result = store.retract_with_limit(&NodeId::new("n001"), 100).unwrap();
         assert!(!result.truncated);
         assert_eq!(result.retracted.len(), 2);
     }

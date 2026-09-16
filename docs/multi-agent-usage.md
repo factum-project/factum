@@ -19,39 +19,41 @@ where multiple agents can write facts with full provenance, and any agent
 can query the shared knowledge base with confidence that the results are
 traceable, permission-filtered, and conflict-aware.
 
-## Architecture: Single Server, Multiple Clients
+## Architecture: Current Limitations
 
-The recommended multi-agent architecture with current Factum capabilities:
+With current stdio transport, **each MCP client starts its own Factum
+process**. There is no way to share a single Factum server instance
+across multiple clients:
 
 ```
-Agent A (MCP client) ─┐
-Agent B (MCP client) ─┼──→ Factum MCP Server (stdio) ──→ RocksDB store
-Agent C (MCP client) ─┘
+Agent A (MCP client) → Factum Process A → separate in-memory store
+Agent B (MCP client) → Factum Process B → separate in-memory store
+Agent C (MCP client) → Factum Process C → separate in-memory store
 ```
 
-**Current limitation**: stdio transport means each MCP client starts its
-own Factum process. To share a single store, use RocksDB persistence
-(`--db-path`) — all processes read the same persisted data, but **only one
-process can hold the RocksDB lock at a time**. Other processes will get
-a lock error on write.
+To share data, use RocksDB persistence (`--db-path`), but **only one
+process can hold the RocksDB lock at a time**. A second process will
+fail to open the database. There is no read-only mode — RocksDB
+acquires an exclusive lock on open.
 
 **Future** (ROADMAP M2): Streamable HTTP transport will allow a single
 Factum server instance to serve multiple MCP clients over the network,
-with proper MVCC concurrency control.
+with proper MVCC concurrency control. See
+[HTTP transport design](http-transport-design.md).
 
 ### Workaround for multi-agent today
 
-1. **One writer, many readers**: Designate one agent as the primary
-   writer. Other agents query via read-only access (they can start their
-   own Factum process pointing at the same RocksDB path in read-only mode).
+1. **Coordinator pattern**: A single agent (or an external script)
+   collects facts from all agents and writes them via `factum_insert_batch`.
+   Other agents cannot directly access the store.
 
-2. **Sequential writing**: Agents take turns writing. Use a coordination
-   mechanism outside Factum (e.g., a file lock, a message queue) to ensure
+2. **Sequential writing**: Agents take turns starting a Factum process,
+   writing their data, and shutting down. Use a coordination mechanism
+   outside Factum (e.g., a file lock, a message queue) to ensure
    only one agent writes at a time.
 
-3. **Batch writing via a coordinator**: A coordinator agent collects
-   facts from multiple agents and writes them in batches using
-   `factum_insert_batch` (atomic all-or-nothing).
+3. **Export/import**: One agent writes and exports nodes (via
+   `factum_search`), another agent imports them into its own store.
 
 ## Core Capabilities for Multi-Agent
 
