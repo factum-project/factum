@@ -323,6 +323,9 @@ impl McpHandler {
     }
 
     /// Execute factum_insert tool.
+    ///
+    /// If the node ID is "auto", a content-based ID is generated automatically
+    /// (same as factum_assert). This frees the caller from manual ID management.
     fn tool_insert(&self, req: &JsonRpcRequest, args: &serde_json::Value) -> JsonRpcResponse {
         let params: FactumInsertParams = match serde_json::from_value(args.clone()) {
             Ok(p) => p,
@@ -342,14 +345,33 @@ impl McpHandler {
                 JsonRpcError::invalid_params("no nodes parsed"));
         }
 
+        let mut node = nodes.into_iter().next().unwrap();
+
+        // If node ID is "auto", generate a content-based ID
+        let auto_id = if node.id.as_str() == "auto" {
+            let canon = serialize::canonical_predicate(&node.predicate);
+            let generated = generate_content_id(&canon);
+            node.id = NodeId::new(generated.clone());
+            Some(generated)
+        } else {
+            None
+        };
+
         // Insert
-        match self.store.insert(nodes.into_iter().next().unwrap()) {
+        match self.store.insert(node) {
             Ok(()) => {
-                let tool_result = ToolResult {
-                    content: vec![ContentBlock::text("Node inserted successfully")],
-                    structuredContent: None,
-                    isError: Some(false),
+                let json = if let Some(id) = auto_id {
+                    serde_json::json!({
+                        "status": "Node inserted successfully",
+                        "node_id": id,
+                        "auto_generated": true,
+                    })
+                } else {
+                    serde_json::json!({
+                        "status": "Node inserted successfully",
+                    })
                 };
+                let tool_result = ToolResult::structured(json);
                 JsonRpcResponse::success(
                     req.id.clone(),
                     serde_json::to_value(tool_result).unwrap(),
@@ -658,6 +680,11 @@ impl McpHandler {
             calibration::default_confidence_for_provenance(&node.provenance)
         };
 
+        // Set optional note
+        if let Some(note) = &params.note {
+            node.note = Some(SmolStr::new(note));
+        }
+
         // Insert
         match self.store.insert(node) {
             Ok(()) => {
@@ -746,12 +773,77 @@ impl McpHandler {
                 let limit = params.limit.unwrap_or(50).min(200);
                 let kw_lower = keyword.to_lowercase();
 
-                // Serialize each node once, then filter+collect from the cached text
-                let matches: Vec<String> = active_nodes.iter()
-                    .map(|n| serialize::canonical(n))
-                    .filter(|canon| canon.to_lowercase().contains(&kw_lower))
-                    .take(limit)
-                    .collect();
+                // Search across node ID, predicate head, entity identifiers,
+                // and canonical text — not just canonical text alone.
+                let mut matches: Vec<serde_json::Value> = Vec::new();
+                for n in &active_nodes {
+                    if matches.len() >= limit {
+                        break;
+                    }
+
+                    let node_id = n.id.as_str();
+                    let pred_head = predicate_head_str(&n.predicate.head);
+
+                    // Collect entity identifiers from predicate args
+                    let entity_ids: Vec<String> = n.predicate.args.iter()
+                        .filter_map(|arg| match arg {
+                            Term::Ent(e) => Some(e.as_str().to_string()),
+                            _ => None,
+                        })
+                        .collect();
+
+                    // Determine match type
+                    let mut match_types: Vec<&str> = Vec::new();
+                    if node_id.to_lowercase().contains(&kw_lower) {
+                        match_types.push("node-id");
+                    }
+                    if pred_head.to_lowercase().contains(&kw_lower) {
+                        match_types.push("predicate-head");
+                    }
+                    for eid in &entity_ids {
+                        if eid.to_lowercase().contains(&kw_lower) {
+                            match_types.push("entity");
+                            break;
+                        }
+                    }
+                    // Also search canonical text as a fallback (covers literal values, string args, etc.)
+                    let canon = serialize::canonical(n);
+                    if canon.to_lowercase().contains(&kw_lower) {
+                        match_types.push("content");
+                    }
+                    // Search note field
+                    if let Some(note) = &n.note {
+                        if note.to_lowercase().contains(&kw_lower) {
+                            match_types.push("note");
+                        }
+                    }
+
+                    if !match_types.is_empty() {
+                        // Build a human-readable summary
+                        let summary = format!(
+                            "(node {} :pred ({}{}))",
+                            node_id,
+                            pred_head,
+                            n.predicate.args.iter()
+                                .map(|a| match a {
+                                    Term::Ent(e) => format!(" @{}", e.as_str()),
+                                    Term::Var(v) => format!(" ?{}", v),
+                                    Term::Lit(l) => format!(" {}", l.to_canonical_string()),
+                                    _ => String::new(),
+                                })
+                                .collect::<Vec<_>>()
+                                .join("")
+                        );
+
+                        matches.push(serde_json::json!({
+                            "node_id": node_id,
+                            "predicate_head": pred_head,
+                            "match_type": match_types,
+                            "summary": summary,
+                            "note": n.note.as_ref().map(|s| s.to_string()),
+                        }));
+                    }
+                }
 
                 let total = matches.len();
                 let json = serde_json::json!({
@@ -1084,6 +1176,36 @@ mod tests {
     }
 
     #[test]
+    fn test_tool_insert_auto_id() {
+        // Using "auto" as node ID should generate a content-based ID
+        let handler = make_handler();
+        let resp = call_tool(&handler, 14, "factum_insert",
+            json!({"node": "(node auto :pred (status @AUTO-TEST-ENTITY active))"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        assert_eq!(result["structuredContent"]["auto_generated"], true);
+        let node_id = result["structuredContent"]["node_id"].as_str().unwrap();
+        assert!(node_id.starts_with("auto-"), "auto-generated ID should start with 'auto-': got {}", node_id);
+    }
+
+    #[test]
+    fn test_tool_insert_auto_id_with_note() {
+        // auto ID should work with :note field
+        let handler = make_handler();
+        let resp = call_tool(&handler, 15, "factum_insert",
+            json!({"node": "(node auto :pred (version @AUTO-NOTE-TEST \"2.0\") :note \"auto-id with note\")"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        assert_eq!(result["structuredContent"]["auto_generated"], true);
+        let node_id = result["structuredContent"]["node_id"].as_str().unwrap();
+        assert!(node_id.starts_with("auto-"));
+        // Verify note was stored
+        let nodes: Vec<_> = handler.store.all_active();
+        let node = nodes.iter().find(|n| n.id.as_str() == node_id).unwrap();
+        assert_eq!(node.note.as_ref().unwrap(), "auto-id with note");
+    }
+
+    #[test]
     fn test_tool_insert_duplicate_returns_invalid_params() {
         let handler = make_handler();
         // n001 already exists in make_handler
@@ -1279,6 +1401,50 @@ mod tests {
     }
 
     #[test]
+    fn test_tool_assert_with_note() {
+        // factum_assert should accept an optional note parameter
+        let handler = make_handler();
+        let resp = call_tool(&handler, 80, "factum_assert",
+            json!({
+                "predicate": "(status @TEST-NOTE active)",
+                "note": "this is the v6 plan"
+            }));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        let node_id = result["structuredContent"]["node_id"].as_str().unwrap();
+        // Verify the note was stored
+        let nodes: Vec<_> = handler.store.all_active();
+        let node = nodes.iter().find(|n| n.id.as_str() == node_id).unwrap();
+        assert_eq!(node.note.as_ref().unwrap(), "this is the v6 plan");
+    }
+
+    #[test]
+    fn test_tool_search_keyword_finds_note() {
+        // Searching for text in a note should match by "note" match type
+        let handler = make_handler();
+        // Insert a node with a note
+        call_tool(&handler, 81, "factum_assert",
+            json!({
+                "predicate": "(status @NOTE-TEST-ENTITY done)",
+                "note": "special-plan-v6"
+            }));
+        // Search for the note text
+        let resp = call_tool(&handler, 82, "factum_search",
+            json!({"mode": "keyword", "keyword": "special-plan-v6"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        let count = result["structuredContent"]["count"].as_u64().unwrap_or(0);
+        assert!(count > 0, "should find node by note content");
+        let results = result["structuredContent"]["results"].as_array().unwrap();
+        let has_note_match = results.iter().any(|r| {
+            r["match_type"].as_array()
+                .map(|mt| mt.iter().any(|t| t == "note"))
+                .unwrap_or(false)
+        });
+        assert!(has_note_match, "should have a 'note' match type");
+    }
+
+    #[test]
     fn test_tool_assert_parse_error() {
         let handler = make_handler();
         let resp = call_tool(&handler, 63, "factum_assert",
@@ -1329,6 +1495,62 @@ mod tests {
         assert!(resp.result.is_some());
         let result = resp.result.unwrap();
         assert!(result["structuredContent"]["count"].as_u64().unwrap_or(0) > 0);
+        // Results should be structured objects with node_id, match_type, etc.
+        let results = result["structuredContent"]["results"].as_array().unwrap();
+        assert!(!results.is_empty());
+        assert!(results[0]["node_id"].is_string());
+        assert!(results[0]["match_type"].is_array());
+    }
+
+    #[test]
+    fn test_tool_search_keyword_finds_node_id() {
+        // Searching for a node ID should match by node-id, not just canonical text
+        let handler = make_handler();
+        let resp = call_tool(&handler, 76, "factum_search",
+            json!({"mode": "keyword", "keyword": "n001"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        let count = result["structuredContent"]["count"].as_u64().unwrap_or(0);
+        assert!(count > 0, "searching for 'n001' should find node n001");
+        // Verify match_type includes "node-id"
+        let results = result["structuredContent"]["results"].as_array().unwrap();
+        let has_node_id_match = results.iter().any(|r| {
+            r["match_type"].as_array()
+                .map(|mt| mt.iter().any(|t| t == "node-id"))
+                .unwrap_or(false)
+        });
+        assert!(has_node_id_match, "should have a node-id match type");
+    }
+
+    #[test]
+    fn test_tool_search_keyword_finds_predicate_head() {
+        // Searching for a predicate head name should match by predicate-head
+        let handler = make_handler();
+        let resp = call_tool(&handler, 77, "factum_search",
+            json!({"mode": "keyword", "keyword": "instance-of"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        let count = result["structuredContent"]["count"].as_u64().unwrap_or(0);
+        assert!(count > 0, "searching for 'instance-of' should find matches");
+    }
+
+    #[test]
+    fn test_tool_search_keyword_finds_entity_identifier() {
+        // Searching for an entity name should match by entity
+        let handler = make_handler();
+        let resp = call_tool(&handler, 78, "factum_search",
+            json!({"mode": "keyword", "keyword": "ACME-CORP"}));
+        assert!(resp.result.is_some());
+        let result = resp.result.unwrap();
+        let count = result["structuredContent"]["count"].as_u64().unwrap_or(0);
+        assert!(count > 0, "searching for 'ACME-CORP' should find matches");
+        let results = result["structuredContent"]["results"].as_array().unwrap();
+        let has_entity_match = results.iter().any(|r| {
+            r["match_type"].as_array()
+                .map(|mt| mt.iter().any(|t| t == "entity"))
+                .unwrap_or(false)
+        });
+        assert!(has_entity_match, "should have an entity match type");
     }
 
     #[test]

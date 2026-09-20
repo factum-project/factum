@@ -117,6 +117,9 @@ pub struct FactumAssertParams {
     /// is used (Asserted=0.60, Extracted=0.80, etc.).
     #[serde(default, alias = "conf")]
     pub confidence: Option<f32>,
+    /// Optional human-readable note for context (e.g. "v6 plan")
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// Get all tool definitions.
@@ -161,13 +164,13 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "factum_insert".into(),
-            description: "Insert a new knowledge node into the Factum graph. The node must be in valid Factum-F S-expression format.".into(),
+            description: "Insert a new knowledge node into the Factum graph. The node must be in valid Factum-F S-expression format. Use \"auto\" as the node ID to auto-generate a content-based ID (same behavior as factum_assert).".into(),
             inputSchema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "node": {
                         "type": "string",
-                        "description": "Factum-F node definition, e.g. (node n001 :pred (instance-of @X organization))"
+                        "description": "Factum-F node definition, e.g. (node n001 :pred (instance-of @X organization)). Use (node auto :pred ...) to auto-generate the node ID."
                     }
                 },
                 "required": ["node"]
@@ -299,6 +302,10 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                         "minimum": 0,
                         "maximum": 1,
                         "description": "Confidence level. If omitted, a provenance-based default is used (Asserted=0.60, Extracted=0.80, etc.). See docs/confidence-calibration-research.md."
+                    },
+                    "note": {
+                        "type": "string",
+                        "description": "Optional human-readable note for context (e.g. \"v6 plan\", \"extracted from page 3\"). Does not affect content hash or equality."
                     }
                 },
                 "required": ["predicate"]

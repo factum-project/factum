@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (usability — from real-world usage feedback)
+- **UnknownNodeField error now lists valid fields**: Parser error message for unknown node fields (e.g., `:title`, `:description`) now includes the full list of valid field names: `:pred, :valid, :src, :conf, :auth, :perm, :deps, :note`. Users no longer need to guess valid field names.
+- **Keyword search now covers node IDs, predicate heads, entity identifiers, and notes**: Previously only searched canonical text, so searching for entity names or node IDs returned 0 results. Now searches all identifier types and returns structured results (`node_id`, `predicate_head`, `match_type`, `summary`, `note`) instead of raw canonical S-expressions.
+- **Keyword search returns structured results**: Results are now JSON objects with `node_id`, `predicate_head`, `match_type` (array indicating which fields matched: "node-id", "predicate-head", "entity", "content", "note"), and `summary` (human-readable predicate preview), instead of raw canonical text strings.
+
+### Added (usability — from real-world usage feedback)
+- **`:note` optional field on Node**: New optional human-readable note field. Does not participate in content hashing or node equality — exists purely for context (e.g., "this is the v6 plan", "extracted from page 3"). Supported in parser, canonical serialization, compact serialization, `factum_insert`, and `factum_assert` (via `note` parameter). Covered by keyword search.
+- **Auto node ID for `factum_insert`**: Using `"auto"` as the node ID in `factum_insert` generates a content-based ID (same as `factum_assert`). Frees users from manual ID sequence management. Response includes `auto_generated: true` and the generated `node_id`.
+- **`note` parameter on `factum_assert`**: `factum_assert` now accepts an optional `note` parameter for attaching human-readable context.
+- **Authoring guide updated**: Added Template 5 (task output recording — the most common real-world pattern), Template 6 (:note usage), UnknownNodeField error section, keyword search documentation, auto ID documentation, and compact form tag 10 (note).
+
 ### Fixed (critical)
 - **Arbitration grouping bug (architecture-level)**: `group_by_bindings` grouped by variable binding values, so conflicting values for the same attribute landed in separate groups — arbitration never engaged for value conflicts (the most common conflict type). Fixed: `arbitrate()` now accepts an optional `&Predicate` query pattern; `group_by_pattern()` groups by head + ground argument positions, excluding variable positions. WeightedVote and Unanimous now correctly detect and resolve value conflicts (e.g., `(status @X active)` vs `(status @X inactive)`). 4 end-to-end regression tests added in query.rs.
 - **Corroboration rejected as error**: `factum_assert` returned `AlreadyExists` error when a second agent asserted the same fact (same content-addressed ID). This discarded the most valuable multi-agent signal — independent agreement. Fixed: `AlreadyExists` now checks if the existing principal differs from the new one. Different principal → returns `corroborated` (success, not error). Same principal → returns `duplicate` (idempotent success). 4 new tests.

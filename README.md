@@ -39,7 +39,8 @@ Complementary: Mem0/Letta store and retrieve context; Factum stores auditable st
 
 ## Key Features (Implemented)
 
-- **Node 7-tuple**: Every knowledge node carries id, predicate, validity, provenance, confidence, authority, and permissions
+- **Node 7-tuple**: Every knowledge node carries id, predicate, validity, provenance, confidence, authority, and permissions — plus optional `:note` for human-readable context
+- **Auto node IDs**: Use `"auto"` as the node ID in `factum_insert` or `factum_assert` to auto-generate content-based IDs — no manual ID management
 - **5-level provenance**: Verbatim / Summary / Extracted / Derived / Asserted — full audit chain
 - **Grammar-enforced model reference**: `Extracted` nodes MUST carry model + version — the parser rejects them if missing (not just a documentation convention)
 - **Cascade retraction**: Derived nodes auto-invalidate when upstream sources are retracted (via `deps_rev` reverse dependency graph); configurable node limit prevents cascade explosion in large knowledge bases

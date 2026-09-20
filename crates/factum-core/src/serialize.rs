@@ -125,6 +125,23 @@ fn canonical_node(node: &Node, out: &mut String) {
         out.push(']');
     }
 
+    // :note (optional, only if present)
+    if let Some(note) = &node.note {
+        out.push_str(" :note ");
+        out.push('"');
+        for c in note.chars() {
+            match c {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                '\n' => out.push_str("\\n"),
+                '\t' => out.push_str("\\t"),
+                '\r' => out.push_str("\\r"),
+                _ => out.push(c),
+            }
+        }
+        out.push('"');
+    }
+
     out.push(')');
 }
 
@@ -302,6 +319,8 @@ pub struct CompactNode {
     pub perm: u32,
     #[serde(rename = "9", skip_serializing_if = "Vec::is_empty", default)]
     pub deps: Vec<String>,
+    #[serde(rename = "10", skip_serializing_if = "Option::is_none", default)]
+    pub note: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -408,6 +427,7 @@ impl CompactNode {
             auth: node.authority.0,
             perm: node.permissions.0,
             deps: node.deps.iter().map(|d| d.to_string()).collect(),
+            note: node.note.as_ref().map(|s| s.to_string()),
         }
     }
 }

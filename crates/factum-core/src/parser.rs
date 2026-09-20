@@ -237,6 +237,7 @@ impl Parser {
             let mut authority = Authority::default();
             let mut permissions = PermissionTag::PUBLIC;
             let mut deps = Vec::new();
+            let mut note: Option<SmolStr> = None;
 
             while !matches!(p.peek_kind(), TokenKind::RParen | TokenKind::Eof) {
                 if let TokenKind::Keyword(k) = p.peek_kind().clone() {
@@ -265,7 +266,18 @@ impl Parser {
                         "deps" => {
                             deps = p.parse_id_list()?;
                         }
-                        _ => return Err(p.error(format!("UnknownNodeField: unknown node field :{}", k))),
+                        "note" => {
+                            let tok = p.advance().clone();
+                            match &tok.kind {
+                                TokenKind::Str(s) => note = Some(s.clone()),
+                                TokenKind::Symbol(s) => note = Some(s.clone()),
+                                _ => return Err(p.error("expected string or symbol for :note field")),
+                            }
+                        }
+                        _ => return Err(p.error(format!(
+                            "UnknownNodeField: unknown node field :{}. Valid fields: :pred, :valid, :src, :conf, :auth, :perm, :deps, :note",
+                            k
+                        ))),
                     }
                 } else {
                     return Err(p.error(format!("expected keyword argument, got {:?}", p.peek_kind())));
@@ -286,6 +298,7 @@ impl Parser {
                 permissions,
                 deps,
                 status: NodeStatus::Active,
+                note,
             })
         })
     }
@@ -938,5 +951,61 @@ mod tests {
         let src = "(node n001 :pred (instance-of @X organization";
         let result = Parser::parse(src);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unknown_node_field_lists_valid_fields() {
+        // When a user tries an unknown field like :title or :description,
+        // the error should list all valid field names so they can self-correct.
+        let src = "(node n001 :pred (note @X \"hello\") :title \"My Node\")";
+        let result = Parser::parse(src);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("UnknownNodeField"), "should mention UnknownNodeField");
+        assert!(err.message.contains(":pred"), "should list :pred as valid");
+        assert!(err.message.contains(":valid"), "should list :valid as valid");
+        assert!(err.message.contains(":src"), "should list :src as valid");
+        assert!(err.message.contains(":conf"), "should list :conf as valid");
+        assert!(err.message.contains(":auth"), "should list :auth as valid");
+        assert!(err.message.contains(":perm"), "should list :perm as valid");
+        assert!(err.message.contains(":deps"), "should list :deps as valid");
+        assert!(err.message.contains(":note"), "should list :note as valid");
+    }
+
+    #[test]
+    fn test_parse_node_with_note() {
+        let src = r#"
+            (node n009
+              :pred (version @PROJECT "6.0")
+              :note "this is the v6 plan")
+        "#;
+        let nodes = Parser::parse(src).unwrap();
+        assert_eq!(nodes.len(), 1);
+        let node = &nodes[0];
+        assert_eq!(node.id.as_str(), "n009");
+        assert!(node.note.is_some());
+        assert_eq!(node.note.as_ref().unwrap(), "this is the v6 plan");
+    }
+
+    #[test]
+    fn test_parse_node_note_symbol() {
+        // Note can also be a symbol (unquoted)
+        let src = "(node n010 :pred (status @X active) :note quick-reminder)";
+        let nodes = Parser::parse(src).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert!(nodes[0].note.is_some());
+        assert_eq!(nodes[0].note.as_ref().unwrap(), "quick-reminder");
+    }
+
+    #[test]
+    fn test_roundtrip_with_note() {
+        // note should survive canonical round-trip
+        let src = r#"(node n011 :pred (version @X "1.0") :note "test roundtrip")"#;
+        let nodes = Parser::parse(src).unwrap();
+        let canon = crate::serialize::canonical(&nodes[0]);
+        let reparsed = Parser::parse(&canon).unwrap();
+        assert_eq!(reparsed.len(), 1);
+        assert!(reparsed[0].note.is_some());
+        assert_eq!(reparsed[0].note.as_ref().unwrap(), "test roundtrip");
     }
 }

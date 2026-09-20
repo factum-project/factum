@@ -21,7 +21,8 @@ Every Factum-F node is a 7-tuple with this canonical structure:
   :conf <0.0-1.0>
   :auth <0.0-1.0>
   :perm <tag>
-  :deps [<id>*])
+  :deps [<id>*]
+  :note "<optional human-readable note>")
 ```
 
 **Required fields**: `:pred` (the assertion). All other fields have defaults:
@@ -31,6 +32,30 @@ Every Factum-F node is a 7-tuple with this canonical structure:
 - `:auth` defaults to `0.5`
 - `:perm` defaults to `public`
 - `:deps` defaults to empty
+- `:note` defaults to `None` (no note attached)
+
+**Valid node fields**: `:pred`, `:valid`, `:src`, `:conf`, `:auth`, `:perm`, `:deps`, `:note`.
+If you use an unknown field, the error message will list all valid field names.
+
+### Auto-Generated Node IDs
+
+You don't need to manually manage node IDs. Use `"auto"` as the node ID, and
+a content-based ID will be generated automatically:
+
+```scheme
+; ✅ Auto-generated ID — no need to track sequence numbers
+(node auto :pred (version @MY-PROJECT "6.0") :note "v6 plan")
+
+; ✅ Explicit ID — use when you need a human-readable identifier
+(node n001 :pred (instance-of @ACME-CORP organization))
+```
+
+The `factum_assert` tool also auto-generates IDs — it's the simpler alternative
+when you don't need `:valid`, `:deps`, or `:perm`:
+
+```json
+{"predicate": "(version @MY-PROJECT \"6.0\")", "note": "v6 plan"}
+```
 
 ## LLM Common Errors and Self-Correction
 
@@ -104,6 +129,25 @@ have a matching `)`. Use the parser error's line/col to locate the mismatch.
 
 **Self-correction**: Ensure every `"` has a matching closing `"`.
 
+### 6. UnknownNodeField
+
+**What happens**: LLM uses a field name that doesn't exist (e.g., `:title`,
+`:description`, `:name`). The error message lists all valid field names.
+
+```scheme
+; ❌ Wrong — :title is not a valid field
+(node n001 :pred (note @X "hello") :title "My Node")
+
+; Error: UnknownNodeField: unknown node field :title.
+;        Valid fields: :pred, :valid, :src, :conf, :auth, :perm, :deps, :note
+
+; ✅ Correct — use :note for human-readable context
+(node n001 :pred (note @X "hello") :note "My Node")
+```
+
+**Self-correction**: The error message lists all valid fields. Use `:note`
+for human-readable context, descriptions, or labels.
+
 ## Few-Shot Templates
 
 ### Template 1: Basic Entity Fact
@@ -152,6 +196,53 @@ have a matching `)`. Use the parser error's line/col to locate the mismatch.
   :src (extracted "press-release" [0 500] (model "gpt-4" "2024-06")))
 ```
 
+### Template 5: Task Output Recording (Most Common Pattern)
+
+When recording task outputs, decisions, or work items — the most common
+real-world use case — use `factum_assert` with a note:
+
+```json
+// Record a task completion
+{"predicate": "(task-status @DEPLOY-PROD completed)", "by": "agent-1", "note": "deployed v2.3.0 to staging"}
+
+// Record a decision
+{"predicate": "(decided @TEAM-X use-postgres)", "by": "pm", "note": "decided in Q4 planning meeting"}
+
+// Record a version bump
+{"predicate": "(version @PROJECT \"2.3.0\")", "by": "ci", "note": "released after all tests passed"}
+```
+
+Or with `factum_insert` for full control:
+
+```scheme
+(node auto
+  :pred (task-status @DEPLOY-PROD completed)
+  :src (asserted "agent-1")
+  :note "deployed v2.3.0 to staging")
+```
+
+**Why this works well**:
+- `"auto"` ID frees you from tracking sequence numbers
+- `:note` attaches human-readable context without affecting content hash
+- `factum_assert` is the shortest path for simple assertions
+- Keyword search covers node ID, entity names, predicate heads, and notes
+
+### Template 6: Note for Human Context
+
+The `:note` field is optional and does not participate in content hashing
+or node equality. Use it for:
+
+- Task descriptions: `:note "deployed v2.3.0 to staging"`
+- Source context: `:note "extracted from page 3 of the Q4 report"`
+- Reviewer comments: `:note "approved by tech lead on 2024-06-15"`
+- Cross-references: `:note "supersedes the v5 plan in node n008"`
+
+```scheme
+(node auto
+  :pred (version @NEWSLETTER-PLAN "6.0")
+  :note "v6 plan — supersedes v5. Focus on AI tools.")
+```
+
 ## Interpreting Query Results
 
 When you query via `factum_query`, you receive results in compact form
@@ -171,6 +262,7 @@ When you query via `factum_query`, you receive results in compact form
 | `"7"` | Authority (f32) | `0.95` |
 | `"8"` | Permission tag (bitmask) | `1` (public), `4` (confidential) |
 | `"9"` | Dependencies (if any) | `["n001"]` |
+| `"10"` | Note (if present) | `"v6 plan"` |
 
 ### Terms in Compact Form
 
@@ -229,6 +321,28 @@ to be opaque strings. **When in doubt, use quotes.**
 
 **Rule of thumb**: If a value contains `.`, `:`, `@`, `?`, or spaces, and it's
 not a number/date/entity-reference/variable, wrap it in double quotes.
+
+## Searching the Knowledge Graph
+
+Use `factum_search` with `mode="keyword"` to find nodes. The keyword search
+covers **all** of the following:
+
+- **Node ID**: e.g., searching "n001" finds node n001
+- **Predicate head**: e.g., searching "instance-of" finds all instance-of nodes
+- **Entity identifiers**: e.g., searching "ACME-CORP" finds nodes mentioning @ACME-CORP
+- **Content**: e.g., searching "active" finds nodes with "active" in canonical text
+- **Note field**: e.g., searching "v6 plan" finds nodes with that text in their :note
+
+Results are structured objects with `node_id`, `predicate_head`, `match_type`
+(which fields matched), and `summary` (human-readable predicate preview).
+
+```json
+{"mode": "keyword", "keyword": "newsletter-plan-v6"}
+```
+
+**Tip**: If you can't find data you just inserted, try searching by entity name
+or predicate head — the keyword search covers all identifiers, not just
+canonical text.
 
 ## Best Practices for LLM Generation
 

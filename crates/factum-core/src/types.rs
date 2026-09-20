@@ -532,6 +532,10 @@ pub enum NodeStatus {
 /// Plus `deps` — the derivation dependency chain for invalidation.
 /// When an upstream node is retracted, all `Derived` nodes transitively
 /// depending on it are cascade-invalidated.
+///
+/// Plus `note` — an optional human-readable context string. This field
+/// does not participate in content hashing or canonical equality; it
+/// exists purely for human/agent context (e.g., "this is the v6 plan").
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Node {
     pub id: NodeId,
@@ -546,6 +550,11 @@ pub struct Node {
     pub deps: Vec<NodeId>,
     /// Lifecycle status.
     pub status: NodeStatus,
+    /// Optional human-readable note. Does not affect content hash or equality.
+    /// Useful for attaching context like "this is the v6 plan" or
+    /// "extracted from page 3 of the Q4 report".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<SmolStr>,
 }
 
 impl Node {
@@ -561,6 +570,7 @@ impl Node {
             permissions: PermissionTag::PUBLIC,
             deps: Vec::new(),
             status: NodeStatus::Active,
+            note: None,
         }
     }
 
@@ -597,6 +607,12 @@ impl Node {
     /// Builder: add a dependency.
     pub fn with_dep(mut self, dep: NodeId) -> Self {
         self.deps.push(dep);
+        self
+    }
+
+    /// Builder: set a human-readable note.
+    pub fn with_note(mut self, note: impl AsRef<str>) -> Self {
+        self.note = Some(SmolStr::new(note));
         self
     }
 
