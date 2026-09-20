@@ -75,8 +75,13 @@ impl StorageBackend for RocksDBBackend {
         let cf = self.cf_handle(cf::NODES)?;
         match self.db.get_cf(cf, id.as_str().as_bytes()) {
             Ok(Some(bytes)) => {
-                let node = Self::deserialize_node(&bytes)?;
-                Ok(Some(Arc::new(node)))
+                // If deserialization fails (e.g., old schema), treat as not found
+                // rather than propagating the error. This allows the store to
+                // continue operating with new-format nodes.
+                match Self::deserialize_node(&bytes) {
+                    Ok(node) => Ok(Some(Arc::new(node))),
+                    Err(_) => Ok(None),
+                }
             }
             Ok(None) => Ok(None),
             Err(e) => Err(StorageError::Io(e.to_string())),
@@ -177,8 +182,13 @@ impl StorageBackend for RocksDBBackend {
         let mut nodes = Vec::new();
         for item in iter {
             let (_key, value) = item.map_err(|e| StorageError::Io(e.to_string()))?;
-            let node = Self::deserialize_node(&value)?;
-            nodes.push(Arc::new(node));
+            // Skip nodes that fail to deserialize (e.g., old format from
+            // a previous schema version). This prevents one bad node from
+            // making the entire store unreadable.
+            match Self::deserialize_node(&value) {
+                Ok(node) => nodes.push(Arc::new(node)),
+                Err(_) => continue,
+            }
         }
         Ok(nodes)
     }
