@@ -16,7 +16,7 @@ This roadmap tracks what's planned, in priority order. Items before the M2 line 
 - ✅ factum-rt: in-memory store, query, arbitration, permissions, verifiers
 - ✅ factum-mcp: protocol layer + request handler (JSON-RPC 2.0, MCP 2025-06-18)
 - ✅ factum-mcp: stdio transport (verified end-to-end with real stdin/stdout)
-- 📋 factum-mcp: Streamable HTTP transport (requires web framework dependency)
+- ✅ factum-mcp: streamable HTTP transport (axum, feature-gated, 8 integration tests)
 - ✅ factum-bench: round-trip, token efficiency, query perf
 - ✅ All tests passing (see CI badge in README)
 - ✅ Parser depth limit + lexer token limit (DoS protection)
@@ -68,12 +68,12 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 - ✅ Store ↔ SubscriptionManager integration: insert/retract notifications wired
 - ✅ Store ↔ VerifierRegistry integration: optional pre-insert verification (opt-in)
 - ✅ `tools/listChanged` capability declared (MCP clients re-query tools on reconnect)
-- ✅ 8 MCP tools: query, lookup, insert, insert_batch, upsert, assert, search, retract
-- ✅ 42 handler unit tests covering all tools (normal + error + edge cases)
+- ✅ 9 MCP tools: query, lookup, insert, insert_batch, upsert, assert, search, retract, review
+- ✅ 53 handler unit tests covering all tools (normal + error + edge cases)
 - ✅ StoreError → MCP error code mapping (invalid_params vs internal)
 - 📋 Real Claude Code integration test (not self-tested handler)
 - 📋 Real Cursor integration test
-- 📋 Streamable HTTP transport (requires web framework: axum or hyper) — [design doc](docs/http-transport-design.md)
+- ✅ Streamable HTTP transport (axum, feature-gated) — [design doc](docs/http-transport-design.md)
 - 📋 Inspector prototype (TS/WASM visual debugger)
 
 ### Vocabulary

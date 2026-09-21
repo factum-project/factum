@@ -1,8 +1,8 @@
 # HTTP Transport Design Document
 
-**Status**: Design (not yet implemented)  
+**Status**: Implemented (Phase 1 — POST /mcp, no SSE)  
 **ROADMAP**: M2 — Promotion-Ready  
-**Target**: 2026 Q4
+**Implemented**: 2026-09-21
 
 ## Goal
 
