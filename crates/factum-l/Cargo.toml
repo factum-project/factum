@@ -1,18 +1,17 @@
 [package]
-name = "factum-bench"
+name = "factum-l"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Benchmarks for Factum: round-trip, token efficiency, query performance"
+description = "Latent space projection for Factum — encoder/decoder and semantic equivalence"
 
 [dependencies]
 factum-core.workspace = true
-factum-rt.workspace = true
-factum-l.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-chrono.workspace = true
+thiserror.workspace = true
 smol_str.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
-tiktoken-rs = "0.12"
+proptest = "1"

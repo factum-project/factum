@@ -6,6 +6,7 @@ members = [
     "crates/factum-mcp",
     "crates/factum-bench",
     "crates/factum-demo",
+    "crates/factum-l",
 ]
 
 [workspace.package]
@@ -19,6 +20,7 @@ description = "Auditable memory for AI agents"
 # Internal (path + version for crates.io publishing)
 factum-core = { path = "crates/factum-core", version = "0.1.3" }
 factum-rt = { path = "crates/factum-rt", version = "0.1.3" }
+factum-l = { path = "crates/factum-l", version = "0.1.3" }
 
 # External
 serde = { version = "1", features = ["derive"] }

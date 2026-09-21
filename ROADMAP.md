@@ -115,13 +115,16 @@ These are **hard blockers** for any public promotion (Show HN, blog posts, confe
 - 📋 `corroboration_count(predicate_hash)` — count independent `(principal, model)` pairs asserting the same canonical predicate. ≥2 pairs allows confidence above band ceiling. Content-addressed IDs naturally prevent same-pair double-counting.
 - 📋 Band clipping enforcement in `factum_assert` — reject or clamp `:conf` values exceeding provenance band, with corroboration check for exceptions. Currently emits warnings only (M2 behavior).
 
-### factum-l: Latent Space Projection 🔬
-- 🔬 Encoder E (Transformer) → continuous thought vector z
-- 🔬 Decoder D(z) → Factum-F sequence
-- 🔬 Semantic round-trip target: >=0.95 (v0.1), >=0.99 (acceptance threshold)
-- 🔬 SemEquiv structured comparison (not vector cosine)
-- 🔬 Training pipeline (Qwen2.5-7B-Instruct base + LoRA)
-- 🔬 Weak decoder baseline first — measure before optimizing
+### factum-l: Measurement Scaffold (Archived — Negative Result) 🔬
+- 🔬 **Status**: Measured, negative result, archived. Open-set identifiers
+  (entity names) cannot be losslessly compressed into fixed dimensions
+  without a codebook — information-theoretic barrier.
+- 🔬 **Deliverables**: SemEquiv structured comparison (production-ready) +
+  anti-cheat gates (dimension budget, latent operation, train/test split) +
+  baseline measurement (0.09) + packed codec baseline (0.68, gate-passing
+  but not semantic compression)
+- 🔬 SemEquiv — **production-ready**, independently useful for deduplication,
+  conflict detection, upsert verification
 
 ### Governance
 - 📋 Morpheme proposal → review → adoption process
@@ -136,9 +139,9 @@ These are deliberately excluded:
 
 - **No agent framework** — Factum is a memory layer via MCP, not a competitor to LangGraph/CrewAI. Framework-agnostic by design.
 - **No GPU inference in core crates** — factum-l is a separate concern
-- **No web frontend** — Inspector is TS/WASM, but it's a debugger, not a product
+- **No general-purpose web frontend** — the review console is the product surface; CLI first, web only after dogfooding proves it
 - **No cloud hosting** — Factum is a library/protocol, not a SaaS
-- **No paid tier** — MIT licensed, period
+- **The Factum library is MIT-licensed and will never have a paid tier.** Consulting, integration, and hosted services around it are out of scope of this repository.
 - **No embedding-based semantic search** — consider using Mem0 alongside Factum for that capability
 - **No memory consolidation/summarization** — consider using Letta alongside Factum for that capability
 

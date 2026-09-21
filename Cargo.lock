@@ -230,6 +230,7 @@ version = "0.1.3"
 dependencies = [
  "chrono",
  "factum-core",
+ "factum-l",
  "factum-rt",
  "serde",
  "serde_json",
@@ -262,6 +263,19 @@ dependencies = [
  "factum-rt",
  "serde_json",
  "smol_str",
+]
+
+[[package]]
+name = "factum-l"
+version = "0.1.3"
+dependencies = [
+ "chrono",
+ "factum-core",
+ "proptest",
+ "serde",
+ "serde_json",
+ "smol_str",
+ "thiserror",
 ]
 
 [[package]]
