@@ -26,6 +26,7 @@ pub mod arbitration;
 pub mod permission;
 pub mod verifier;
 pub mod subscription;
+pub mod review;
 
 pub use store::{FactumStore, StoreError, RetractResult};
 pub use storage::{StorageBackend, InMemoryBackend, StorageError, WriteOp};
@@ -34,3 +35,4 @@ pub use arbitration::{ConflictPolicy, ArbitrationResult};
 pub use permission::{PermissionContext, PermissionError};
 pub use verifier::{Verifier, Verdict, VerifierRegistry};
 pub use subscription::{Subscription, SubscriptionEvent};
+pub use review::{ReviewQueue, ReviewEvent, ReviewEventType, ReviewPriority, ReviewStatus, SharedReviewQueue};

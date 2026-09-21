@@ -1,6 +1,6 @@
 //! MCP tool definitions for Factum.
 //!
-//! Eight tools are exposed:
+//! Nine tools are exposed:
 //! - `factum_query`: Query the knowledge graph by predicate pattern
 //! - `factum_lookup`: Look up all knowledge about a specific entity
 //! - `factum_insert`: Insert a single node (full syntax)
@@ -9,6 +9,7 @@
 //! - `factum_assert`: Assert a fact with minimal syntax (auto node ID + provenance)
 //! - `factum_search`: Search nodes by keyword, list predicates, or get stats
 //! - `factum_retract`: Retract a node (cascade)
+//! - `factum_review`: Review queue — list/approve/reject events needing human decisions
 //!
 //! Field names use camelCase to match the MCP wire format exactly.
 
@@ -311,6 +312,26 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["predicate"]
             }),
         },
+        ToolDefinition {
+            name: "factum_review".into(),
+            description: "Review queue for agent knowledge governance. Lists events that need human decisions (ambiguous arbitration, confidence band violations, truncated cascades). Modes: list_pending (default), list_all, approve, reject, get_detail. Reject mode retracts associated nodes and cascades to derived nodes.".into(),
+            inputSchema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["list_pending", "list_all", "approve", "reject", "get_detail"],
+                        "default": "list_pending",
+                        "description": "Review action mode"
+                    },
+                    "event_id": {
+                        "type": "integer",
+                        "description": "Event ID (required for approve, reject, get_detail modes)"
+                    }
+                },
+                "required": ["mode"]
+            }),
+        },
     ]
 }
 
@@ -331,7 +352,7 @@ mod tests {
     #[test]
     fn test_tool_definitions() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 9);
         assert!(tools.iter().any(|t| t.name == "factum_query"));
         assert!(tools.iter().any(|t| t.name == "factum_insert"));
         assert!(tools.iter().any(|t| t.name == "factum_retract"));

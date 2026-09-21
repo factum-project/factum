@@ -14,6 +14,7 @@ use factum_rt::store::FactumStore;
 use factum_rt::query::{Query, QueryOptions};
 use factum_rt::arbitration::ConflictPolicy;
 use factum_rt::permission::PermissionContext;
+use factum_rt::review::{ReviewQueue, ReviewEventType, ReviewPriority, SharedReviewQueue};
 use crate::protocol::*;
 use crate::tools::*;
 
@@ -96,6 +97,8 @@ pub struct McpHandler {
     store: Arc<FactumStore>,
     /// The preferred serialization form, negotiated during initialize.
     preferred_form: parking_lot::RwLock<PreferredForm>,
+    /// Review queue — holds events that need human decisions.
+    review_queue: SharedReviewQueue,
 }
 
 impl McpHandler {
@@ -104,7 +107,22 @@ impl McpHandler {
         Self {
             store,
             preferred_form: parking_lot::RwLock::new(PreferredForm::default()),
+            review_queue: Arc::new(ReviewQueue::new()),
         }
+    }
+
+    /// Create a new handler with a shared review queue.
+    pub fn with_review_queue(store: Arc<FactumStore>, review_queue: SharedReviewQueue) -> Self {
+        Self {
+            store,
+            preferred_form: parking_lot::RwLock::new(PreferredForm::default()),
+            review_queue,
+        }
+    }
+
+    /// Get a reference to the review queue.
+    pub fn review_queue(&self) -> &SharedReviewQueue {
+        &self.review_queue
     }
 
     /// Process a JSON-RPC request and return a JSON-RPC response.
@@ -234,6 +252,7 @@ impl McpHandler {
             "factum_assert" => self.tool_assert(req, &arguments),
             "factum_search" => self.tool_search(req, &arguments),
             "factum_retract" => self.tool_retract(req, &arguments),
+            "factum_review" => self.tool_review(req, &arguments),
             _ => JsonRpcResponse::error(req.id.clone(),
                 JsonRpcError::invalid_params(format!("unknown tool: {}", tool_name))),
         }
@@ -391,8 +410,24 @@ impl McpHandler {
         };
 
         let max_nodes = params.max_cascade_nodes.unwrap_or(100);
+        let retract_node_id = params.node_id.clone();
         match self.store.retract_with_limit(&NodeId::new(params.node_id), max_nodes) {
             Ok(result) => {
+                // Enqueue review event if cascade was truncated.
+                if result.truncated {
+                    self.review_queue.enqueue(
+                        ReviewEventType::CascadeTruncated,
+                        ReviewPriority::High,
+                        vec![retract_node_id],
+                        format!(
+                            "Cascade retraction truncated at {} nodes (depth {}). \
+                             Knowledge base may be in a partially-retracted state. \
+                             Review and decide whether to continue retraction or restore.",
+                            result.retracted.len(),
+                            result.depth_reached,
+                        ),
+                    );
+                }
                 let json = serde_json::json!({
                     "retracted": result.retracted.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
                     "count": result.retracted.len(),
@@ -621,6 +656,20 @@ impl McpHandler {
                 let node_ids: Vec<_> = matching.iter()
                     .map(|n| n.id.to_string())
                     .collect();
+
+                // Enqueue review event for ambiguous arbitration.
+                self.review_queue.enqueue(
+                    ReviewEventType::AmbiguousArbitration,
+                    ReviewPriority::Normal,
+                    node_ids.clone(),
+                    format!(
+                        "Upsert found {} matching nodes with conflicting values. \
+                         System refused to guess. Retract specific nodes manually \
+                         or narrow the predicate.",
+                        matching.len(),
+                    ),
+                );
+
                 let json = serde_json::json!({
                     "action": "ambiguous",
                     "matching_nodes": node_ids,
@@ -683,6 +732,20 @@ impl McpHandler {
         // Set optional note
         if let Some(note) = &params.note {
             node.note = Some(SmolStr::new(note));
+        }
+
+        // Check confidence band — enqueue if exceeded (no corroboration check yet).
+        // This wires the previously dead check_confidence_band() into the assert path.
+        if let Err(band_warning) = calibration::check_confidence_band(&node.provenance, node.confidence) {
+            self.review_queue.enqueue(
+                ReviewEventType::BandClippingExceeded,
+                ReviewPriority::Normal,
+                vec![node_id.clone()],
+                format!(
+                    "Confidence {} for provenance {:?} exceeds band. {}",
+                    node.confidence.0, node.provenance, band_warning,
+                ),
+            );
         }
 
         // Insert
@@ -966,6 +1029,177 @@ impl McpHandler {
                 JsonRpcError::invalid_params("resource not found or not accessible")),
         }
     }
+
+    /// Execute factum_review tool — human approval workflow for agent knowledge.
+    ///
+    /// Modes:
+    /// - `list_pending`: List all pending review events (sorted by priority)
+    /// - `list_all`: List all events including resolved (newest first)
+    /// - `approve`: Mark an event as approved (fact is allowed to stand)
+    /// - `reject`: Mark an event as rejected and retract associated nodes
+    /// - `get_detail`: Get full detail of a specific event
+    fn tool_review(&self, req: &JsonRpcRequest, args: &serde_json::Value) -> JsonRpcResponse {
+        let mode = args.get("mode")
+            .and_then(|m| m.as_str())
+            .unwrap_or("list_pending");
+
+        match mode {
+            "list_pending" => {
+                let pending = self.review_queue.list_pending();
+                let json = serde_json::json!({
+                    "pending": pending.iter().map(|e| serde_json::json!({
+                        "id": e.id,
+                        "event_type": e.event_type.as_str(),
+                        "priority": e.priority.as_str(),
+                        "node_ids": e.node_ids,
+                        "reason": e.reason,
+                        "timestamp": e.timestamp,
+                    })).collect::<Vec<_>>(),
+                    "count": pending.len(),
+                });
+                let tool_result = ToolResult::structured(json);
+                JsonRpcResponse::success(
+                    req.id.clone(),
+                    serde_json::to_value(tool_result).unwrap(),
+                )
+            }
+            "list_all" => {
+                let all = self.review_queue.list_all();
+                let json = serde_json::json!({
+                    "events": all.iter().map(|e| serde_json::json!({
+                        "id": e.id,
+                        "event_type": e.event_type.as_str(),
+                        "priority": e.priority.as_str(),
+                        "node_ids": e.node_ids,
+                        "reason": e.reason,
+                        "timestamp": e.timestamp,
+                        "status": e.status.as_str(),
+                    })).collect::<Vec<_>>(),
+                    "count": all.len(),
+                    "pending_count": self.review_queue.pending_count(),
+                });
+                let tool_result = ToolResult::structured(json);
+                JsonRpcResponse::success(
+                    req.id.clone(),
+                    serde_json::to_value(tool_result).unwrap(),
+                )
+            }
+            "approve" => {
+                let event_id = match args.get("event_id").and_then(|v| v.as_u64()) {
+                    Some(id) => id,
+                    None => return JsonRpcResponse::error(req.id.clone(),
+                        JsonRpcError::invalid_params("event_id is required for approve mode")),
+                };
+                match self.review_queue.approve(event_id) {
+                    Ok(()) => {
+                        let json = serde_json::json!({
+                            "action": "approved",
+                            "event_id": event_id,
+                            "status": "event approved — fact is allowed to stand"
+                        });
+                        let tool_result = ToolResult::structured(json);
+                        JsonRpcResponse::success(
+                            req.id.clone(),
+                            serde_json::to_value(tool_result).unwrap(),
+                        )
+                    }
+                    Err(e) => JsonRpcResponse::error(req.id.clone(),
+                        JsonRpcError::invalid_params(e)),
+                }
+            }
+            "reject" => {
+                let event_id = match args.get("event_id").and_then(|v| v.as_u64()) {
+                    Some(id) => id,
+                    None => return JsonRpcResponse::error(req.id.clone(),
+                        JsonRpcError::invalid_params("event_id is required for reject mode")),
+                };
+                // Mark as rejected.
+                if let Err(e) = self.review_queue.reject(event_id) {
+                    return JsonRpcResponse::error(req.id.clone(),
+                        JsonRpcError::invalid_params(e));
+                }
+                // Retract associated nodes.
+                let event = match self.review_queue.get(event_id) {
+                    Some(e) => e,
+                    None => return JsonRpcResponse::error(req.id.clone(),
+                        JsonRpcError::invalid_params(format!("event {} not found", event_id))),
+                };
+                let mut retracted_nodes = Vec::new();
+                let mut errors = Vec::new();
+                for node_id_str in &event.node_ids {
+                    match self.store.retract(&NodeId::new(node_id_str.clone())) {
+                        Ok(retracted) => {
+                            retracted_nodes.extend(retracted.iter().map(|id| id.to_string()));
+                        }
+                        Err(e) => {
+                            errors.push(format!("{}: {}", node_id_str, e));
+                        }
+                    }
+                }
+                let json = serde_json::json!({
+                    "action": "rejected",
+                    "event_id": event_id,
+                    "retracted_nodes": retracted_nodes,
+                    "retracted_count": retracted_nodes.len(),
+                    "errors": errors,
+                    "status": "event rejected — associated nodes retracted"
+                });
+                let tool_result = ToolResult::structured(json);
+                JsonRpcResponse::success(
+                    req.id.clone(),
+                    serde_json::to_value(tool_result).unwrap(),
+                )
+            }
+            "get_detail" => {
+                let event_id = match args.get("event_id").and_then(|v| v.as_u64()) {
+                    Some(id) => id,
+                    None => return JsonRpcResponse::error(req.id.clone(),
+                        JsonRpcError::invalid_params("event_id is required for get_detail mode")),
+                };
+                match self.review_queue.get(event_id) {
+                    Some(event) => {
+                        // For node-related events, include node details.
+                        let node_details: Vec<_> = event.node_ids.iter()
+                            .filter_map(|id| {
+                                self.store.get(&NodeId::new(id.clone()))
+                                    .map(|n| serde_json::json!({
+                                        "node_id": id,
+                                        "canonical": serialize::canonical(&n),
+                                        "status": format!("{:?}", n.status),
+                                        "confidence": n.confidence.0,
+                                        "provenance": format!("{:?}", n.provenance),
+                                    }))
+                            })
+                            .collect();
+                        let json = serde_json::json!({
+                            "event": {
+                                "id": event.id,
+                                "event_type": event.event_type.as_str(),
+                                "priority": event.priority.as_str(),
+                                "node_ids": event.node_ids,
+                                "reason": event.reason,
+                                "timestamp": event.timestamp,
+                                "status": event.status.as_str(),
+                            },
+                            "node_details": node_details,
+                        });
+                        let tool_result = ToolResult::structured(json);
+                        JsonRpcResponse::success(
+                            req.id.clone(),
+                            serde_json::to_value(tool_result).unwrap(),
+                        )
+                    }
+                    None => JsonRpcResponse::error(req.id.clone(),
+                        JsonRpcError::invalid_params(format!("event {} not found", event_id))),
+                }
+            }
+            _ => JsonRpcResponse::error(req.id.clone(),
+                JsonRpcError::invalid_params(format!(
+                    "unknown mode '{}'. Valid modes: list_pending, list_all, approve, reject, get_detail",
+                    mode
+                ))),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1035,7 +1269,7 @@ mod tests {
         let resp = handler.handle(&req);
         let result = resp.result.unwrap();
         assert!(result["tools"].is_array());
-        assert_eq!(result["tools"].as_array().unwrap().len(), 8);
+        assert_eq!(result["tools"].as_array().unwrap().len(), 9);
     }
 
     #[test]
@@ -1648,5 +1882,240 @@ mod tests {
         let resp = handler.handle(&req);
         let caps = resp.result.unwrap()["capabilities"].clone();
         assert_eq!(caps["tools"]["listChanged"], true);
+    }
+
+    // --- Review queue tests ---
+
+    #[test]
+    fn test_review_band_clipping_enqueues() {
+        // Assert with confidence 0.99 for Asserted provenance (band: 0.30-0.80).
+        // This should trigger band clipping and enqueue a review event.
+        let handler = make_handler();
+        let resp = call_tool(&handler, 90, "factum_assert",
+            json!({"predicate": "(revenue @TEST-CORP 1000.00)", "by": "agent-a", "confidence": 0.99}));
+
+        assert!(resp.result.is_some());
+        // The assert should succeed (we enqueue but don't block).
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        assert_eq!(content["action"], "asserted");
+
+        // Review queue should have 1 pending event.
+        let review_resp = call_tool(&handler, 91, "factum_review",
+            json!({"mode": "list_pending"}));
+        let review_result = review_resp.result.unwrap();
+        let content = &review_result["structuredContent"];
+        assert_eq!(content["count"], 1);
+        assert_eq!(content["pending"][0]["event_type"], "BandClippingExceeded");
+    }
+
+    #[test]
+    fn test_review_no_band_clipping_for_default_confidence() {
+        // Assert with default confidence (no explicit value).
+        // Default for Asserted is 0.60, which is within band (0.30-0.80).
+        // No review event should be enqueued.
+        let handler = make_handler();
+        let _resp = call_tool(&handler, 90, "factum_assert",
+            json!({"predicate": "(revenue @TEST-CORP 2000.00)", "by": "agent-a"}));
+
+        let review_resp = call_tool(&handler, 91, "factum_review",
+            json!({"mode": "list_pending"}));
+        let review_result = review_resp.result.unwrap();
+        let content = &review_result["structuredContent"];
+        assert_eq!(content["count"], 0);
+    }
+
+    #[test]
+    fn test_review_corroboration_does_not_enqueue() {
+        // Two different principals asserting the same fact = corroboration.
+        // This should NOT enqueue a review event.
+        let handler = make_handler();
+
+        // First assert.
+        call_tool(&handler, 90, "factum_assert",
+            json!({"predicate": "(located-in @CORP-X @CITY-Y)", "by": "agent-a"}));
+
+        // Second assert (different principal, same content) = corroboration.
+        let resp = call_tool(&handler, 91, "factum_assert",
+            json!({"predicate": "(located-in @CORP-X @CITY-Y)", "by": "agent-b"}));
+
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        assert_eq!(content["action"], "corroborated");
+
+        // Review queue should be empty.
+        let review_resp = call_tool(&handler, 92, "factum_review",
+            json!({"mode": "list_pending"}));
+        let review_result = review_resp.result.unwrap();
+        let content = &review_result["structuredContent"];
+        assert_eq!(content["count"], 0);
+    }
+
+    #[test]
+    fn test_review_upsert_ambiguous_enqueues() {
+        // Upsert with multiple matching nodes should enqueue AmbiguousArbitration.
+        let handler = make_handler();
+
+        // Insert two nodes with the same entity + predicate head.
+        call_tool(&handler, 90, "factum_insert",
+            json!({"node": "(node n100 :pred (located-in @DUAL-CORP @CITY-A))"}));
+        call_tool(&handler, 91, "factum_insert",
+            json!({"node": "(node n101 :pred (located-in @DUAL-CORP @CITY-B))"}));
+
+        // Upsert should find 2 matches → Ambiguous.
+        let resp = call_tool(&handler, 92, "factum_upsert",
+            json!({"node": "(node n102 :pred (located-in @DUAL-CORP @CITY-C))",
+                   "entity": "DUAL-CORP", "predicate": "located-in"}));
+
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        assert_eq!(content["action"], "ambiguous");
+
+        // Review queue should have 1 pending AmbiguousArbitration event.
+        let review_resp = call_tool(&handler, 93, "factum_review",
+            json!({"mode": "list_pending"}));
+        let review_result = review_resp.result.unwrap();
+        let content = &review_result["structuredContent"];
+        assert_eq!(content["count"], 1);
+        assert_eq!(content["pending"][0]["event_type"], "AmbiguousArbitration");
+    }
+
+    #[test]
+    fn test_review_retract_truncated_enqueues_high_priority() {
+        // Retract with a very low max_cascade_nodes to force truncation.
+        let handler = make_handler();
+
+        // Insert a base node + derived node.
+        call_tool(&handler, 90, "factum_insert",
+            json!({"node": "(node n200 :pred (located-in @TRUNC-CORP @CITY-Z))"}));
+        call_tool(&handler, 91, "factum_insert",
+            json!({"node": "(node n201 :pred (subsidiary-of @SUB-TRUNC @TRUNC-CORP) :src (derived n200 rule-test) :deps [n200])"}));
+
+        // Retract with max_cascade_nodes=1 — should truncate (root only, no cascade).
+        let resp = call_tool(&handler, 92, "factum_retract",
+            json!({"node_id": "n200", "max_cascade_nodes": 1}));
+
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        assert_eq!(content["truncated"], true);
+
+        // Review queue should have 1 pending CascadeTruncated event with High priority.
+        let review_resp = call_tool(&handler, 93, "factum_review",
+            json!({"mode": "list_pending"}));
+        let review_result = review_resp.result.unwrap();
+        let content = &review_result["structuredContent"];
+        assert_eq!(content["count"], 1);
+        assert_eq!(content["pending"][0]["event_type"], "CascadeTruncated");
+        assert_eq!(content["pending"][0]["priority"], "High");
+    }
+
+    #[test]
+    fn test_review_approve() {
+        let handler = make_handler();
+
+        // Trigger a band clipping event.
+        call_tool(&handler, 90, "factum_assert",
+            json!({"predicate": "(revenue @APPROVE-CORP 500.00)", "by": "agent-a", "confidence": 0.99}));
+
+        // Verify 1 pending.
+        let resp = call_tool(&handler, 91, "factum_review",
+            json!({"mode": "list_pending"}));
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        assert_eq!(content["count"], 1);
+        let event_id = content["pending"][0]["id"].as_u64().unwrap();
+
+        // Approve it.
+        let resp = call_tool(&handler, 92, "factum_review",
+            json!({"mode": "approve", "event_id": event_id}));
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        assert_eq!(content["action"], "approved");
+
+        // Verify 0 pending.
+        let resp = call_tool(&handler, 93, "factum_review",
+            json!({"mode": "list_pending"}));
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        assert_eq!(content["count"], 0);
+    }
+
+    #[test]
+    fn test_review_reject_retracts_nodes() {
+        let handler = make_handler();
+
+        // Trigger a band clipping event.
+        call_tool(&handler, 90, "factum_assert",
+            json!({"predicate": "(revenue @REJECT-CORP 300.00)", "by": "agent-a", "confidence": 0.99}));
+
+        // Get the event ID.
+        let resp = call_tool(&handler, 91, "factum_review",
+            json!({"mode": "list_pending"}));
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        let event_id = content["pending"][0]["id"].as_u64().unwrap();
+        let node_id = content["pending"][0]["node_ids"][0].as_str().unwrap();
+
+        // Verify the node exists.
+        let node = handler.store.get(&NodeId::new(node_id.to_string()));
+        assert!(node.is_some());
+
+        // Reject it — should retract the node.
+        let resp = call_tool(&handler, 92, "factum_review",
+            json!({"mode": "reject", "event_id": event_id}));
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        assert_eq!(content["action"], "rejected");
+        assert!(content["retracted_count"].as_u64().unwrap() >= 1);
+
+        // Verify the node is now retracted.
+        let node = handler.store.get(&NodeId::new(node_id.to_string()));
+        assert!(node.is_some());
+        assert_eq!(node.unwrap().status, NodeStatus::Retracted);
+    }
+
+    #[test]
+    fn test_review_get_detail() {
+        let handler = make_handler();
+
+        // Trigger a band clipping event.
+        call_tool(&handler, 90, "factum_assert",
+            json!({"predicate": "(revenue @DETAIL-CORP 700.00)", "by": "agent-a", "confidence": 0.99}));
+
+        // Get the event ID.
+        let resp = call_tool(&handler, 91, "factum_review",
+            json!({"mode": "list_pending"}));
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        let event_id = content["pending"][0]["id"].as_u64().unwrap();
+
+        // Get detail.
+        let resp = call_tool(&handler, 92, "factum_review",
+            json!({"mode": "get_detail", "event_id": event_id}));
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        assert_eq!(content["event"]["id"], event_id);
+        assert_eq!(content["event"]["event_type"], "BandClippingExceeded");
+        assert!(content["node_details"].is_array());
+        assert_eq!(content["node_details"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_review_list_all() {
+        let handler = make_handler();
+
+        // Trigger two events.
+        call_tool(&handler, 90, "factum_assert",
+            json!({"predicate": "(revenue @ALL-CORP-1 100.00)", "by": "agent-a", "confidence": 0.99}));
+        call_tool(&handler, 91, "factum_assert",
+            json!({"predicate": "(revenue @ALL-CORP-2 200.00)", "by": "agent-a", "confidence": 0.99}));
+
+        // List all.
+        let resp = call_tool(&handler, 92, "factum_review",
+            json!({"mode": "list_all"}));
+        let result = resp.result.unwrap();
+        let content = &result["structuredContent"];
+        assert_eq!(content["count"], 2);
+        assert_eq!(content["pending_count"], 2);
     }
 }
